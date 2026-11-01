@@ -1,0 +1,18 @@
+# Private notes
+BRIAN_CONTEXT.md
+
+# Dependencies & builds
+node_modules/
+.svelte-kit/
+build/
+dist/
+.wrangler/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+.dev.vars
+
+# OS / editor
+.DS_Store
