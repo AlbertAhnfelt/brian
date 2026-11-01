@@ -1,0 +1,12 @@
+{
+	"name": "brian",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@11.6.0",
+	"scripts": {
+		"dev:web": "pnpm --filter @brian/web dev",
+		"dev:server": "pnpm --filter @brian/server dev",
+		"check": "pnpm -r check",
+		"build": "pnpm -r build"
+	}
+}

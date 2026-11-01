@@ -1,0 +1,16 @@
+{
+	"name": "@brian/server",
+	"private": true,
+	"version": "0.0.1",
+	"type": "module",
+	"scripts": {
+		"dev": "wrangler dev",
+		"deploy": "wrangler deploy",
+		"check": "wrangler types --check && tsc --noEmit",
+		"gen": "wrangler types"
+	},
+	"devDependencies": {
+		"typescript": "^6.0.3",
+		"wrangler": "^4.97.0"
+	}
+}
