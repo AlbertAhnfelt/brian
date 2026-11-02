@@ -1,0 +1,48 @@
+export const MAX_PATH_LENGTH = 512;
+export const MAX_PAGE_BYTES = 1024 * 1024;
+
+export class VaultError extends Error {}
+
+/**
+ * Normalizes a page path ("notes/today.md"): no leading slash, no empty, "." or ".." segments.
+ * Throws VaultError for paths that can't be stored.
+ */
+export function normalizePath(input: string): string {
+	const path = input.trim().replace(/^\/+/, '');
+	const segments = path.split('/');
+	if (!path || path.endsWith('/')) throw new VaultError(`"${input}" is not a page path.`);
+	if (path.length > MAX_PATH_LENGTH) throw new VaultError(`Paths can be at most ${MAX_PATH_LENGTH} characters.`);
+	if (segments.some((s) => s === '' || s === '.' || s === '..')) {
+		throw new VaultError(`"${input}" has an empty, "." or ".." segment.`);
+	}
+	if (/[\u0000-\u001f]/.test(path)) throw new VaultError('Paths cannot contain control characters.');
+	return path;
+}
+
+/** Normalizes a folder prefix for list(): "" for the root, otherwise ending in "/". */
+export function normalizePrefix(input = ''): string {
+	const prefix = input.trim().replace(/^\/+/, '').replace(/\/*$/, '');
+	return prefix ? `${normalizePath(prefix)}/` : '';
+}
+
+export function checkSize(content: string): void {
+	if (new TextEncoder().encode(content).length > MAX_PAGE_BYTES) {
+		throw new VaultError(`Pages can be at most ${MAX_PAGE_BYTES / 1024} KB.`);
+	}
+}
+
+/**
+ * Turns free text into a safe FTS5 query: each word becomes a quoted term, all must match.
+ * A trailing "*" on a word keeps prefix matching ("proj*").
+ */
+export function ftsQuery(text: string): string {
+	return text
+		.split(/\s+/)
+		.filter(Boolean)
+		.map((word) => {
+			const prefix = word.endsWith('*') && word.length > 1;
+			const term = (prefix ? word.slice(0, -1) : word).replace(/"/g, '""');
+			return `"${term}"${prefix ? '*' : ''}`;
+		})
+		.join(' ');
+}

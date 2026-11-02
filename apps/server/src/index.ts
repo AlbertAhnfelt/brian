@@ -19,3 +19,5 @@ export default new OAuthProvider<Env>({
 		authorization_servers: [env.BASE_URL]
 	}
 });
+
+export { Vault } from './vault/vault';
