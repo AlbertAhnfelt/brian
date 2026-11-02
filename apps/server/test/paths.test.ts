@@ -41,7 +41,11 @@ describe('safeNext', () => {
 		expect(safeNext('/authorize?client_id=x')).toBe('/authorize?client_id=x');
 	});
 
-	it.each([null, '', 'https://evil.example', '//evil.example', '/\\evil.example', 'javascript:alert(1)'])(
+	it('keeps query and hash, normalizing like a browser', () => {
+		expect(safeNext('/a/../account?x=1#top')).toBe('/account?x=1#top');
+	});
+
+	it.each([null, '', 'https://evil.example', '//evil.example', '/\\evil.example', 'javascript:alert(1)', '/\t/evil.com', '/\n/evil.com', '/\\evil.com', '/%2F/evil.com'.replace('%2F', '/')])(
 		'falls back for %j',
 		(next) => expect(safeNext(next)).toBe('/connect')
 	);

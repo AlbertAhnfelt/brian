@@ -12,14 +12,7 @@ export class Account extends WorkerEntrypoint<Env> implements AccountRpc {
 	/** Apps (Claude, ChatGPT, …) the user has connected. */
 	async connections(userId: string): Promise<Connection[]> {
 		const oauth = getOAuthApi(oauthOptions, this.env);
-		const grants = [];
-		let cursor: string | undefined;
-		do {
-			const page = await oauth.listUserGrants(userId, { cursor });
-			grants.push(...page.items);
-			cursor = page.cursor;
-		} while (cursor);
-
+		const grants = await this.grants(userId);
 		return Promise.all(
 			grants.map(async (grant) => {
 				const client = await oauth.lookupClient(grant.clientId).catch(() => null);
@@ -38,7 +31,21 @@ export class Account extends WorkerEntrypoint<Env> implements AccountRpc {
 
 	/** Revokes every connected app and erases the vault. The website deletes the user rows. */
 	async deleteAccount(userId: string): Promise<void> {
-		for (const { grantId } of await this.connections(userId)) await this.disconnect(userId, grantId);
+		// No client lookups here: a CIMD client's metadata fetch must not be able to slow deletion.
+		const oauth = getOAuthApi(oauthOptions, this.env);
+		for (const grant of await this.grants(userId)) await oauth.revokeGrant(grant.id, userId);
 		await this.env.VAULT.getByName(userId).destroy();
+	}
+
+	private async grants(userId: string) {
+		const oauth = getOAuthApi(oauthOptions, this.env);
+		const grants = [];
+		let cursor: string | undefined;
+		do {
+			const page = await oauth.listUserGrants(userId, { cursor });
+			grants.push(...page.items);
+			cursor = page.cursor;
+		} while (cursor);
+		return grants;
 	}
 }

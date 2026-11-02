@@ -6,6 +6,6 @@ import type { RequestHandler } from './$types';
 export const POST: RequestHandler = async ({ cookies }) => {
 	const token = cookies.get(SESSION_COOKIE);
 	if (token) await deleteSession(env.DB, token);
-	cookies.delete(SESSION_COOKIE, { path: '/' });
+	cookies.delete(SESSION_COOKIE, { path: '/', secure: true });
 	redirect(303, '/');
 };

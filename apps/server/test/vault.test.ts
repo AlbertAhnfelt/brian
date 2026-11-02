@@ -1,3 +1,4 @@
+import { runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import { failure } from './helpers';
@@ -88,9 +89,50 @@ describe('Vault', () => {
 		await v.write('a.md', 'a');
 		await v.write('b/c.md', 'c');
 		await v.delete('a.md');
-		expect((await v.exportAll()).map((p) => p.path)).toEqual(['b/c.md']);
+		expect((await v.exportAll()).map((p) => p.path)).toEqual(['b/c.md', expect.stringMatching(/^\.trash\/.+\/a\.md$/)]);
 		await v.destroy();
 		expect(await v.exportAll()).toEqual([]);
 		expect(await v.list('')).toEqual({ folders: [], files: [] });
+	});
+});
+
+describe('Vault hardening', () => {
+	it('lists folders with emoji names', async () => {
+		const v = vault();
+		await v.write('🐶 dogs/brian.md', '');
+		expect(await v.list('🐶 dogs')).toEqual({ folders: [], files: ['🐶 dogs/brian.md'] });
+	});
+
+	it('refuses a replace_all that would blow up the page, without building it', async () => {
+		const v = vault();
+		await v.write('a.md', 'a'.repeat(1024 * 1024));
+		expect(await failure(v.edit('a.md', 'a', 'b'.repeat(100_000), true))).toMatch(/at most/);
+		expect((await v.read('a.md')).content.length).toBe(1024 * 1024);
+	});
+
+	it('refuses multi-byte edits over the limit', async () => {
+		const v = vault();
+		await v.write('a.md', 'x'.repeat(400_000));
+		await v.edit('a.md', 'x', 'é', true);
+		expect(await failure(v.edit('a.md', 'é', '日本', true))).toMatch(/at most/);
+	});
+
+	it.each(['..\\..\\evil.md', 'C:/Windows/evil.md', 'a\u2215..\u2215b.md', 'invoice\u202Etxt.md', 'zero\u200Bwidth.md'])(
+		'rejects unsafe path %j',
+		async (path) => expect(await failure(vault().write(path, 'x'))).toMatch(/cannot contain/)
+	);
+
+	it('includes the trash in exports and purges it after 30 days', async () => {
+		const v = vault();
+		await v.write('old.md', 'old');
+		await v.delete('old.md');
+		expect((await v.exportAll()).map((p) => p.path)).toEqual([expect.stringMatching(/^\.trash\/.+\/old\.md$/)]);
+
+		await runInDurableObject(v, (_, state) => {
+			state.storage.sql.exec(`UPDATE trash SET deleted_at = deleted_at - 31 * 24 * 60 * 60 * 1000`);
+		});
+		await v.write('new.md', 'new');
+		await v.delete('new.md');
+		expect((await v.exportAll()).map((p) => p.path)).toEqual([expect.stringMatching(/\/new\.md$/)]);
 	});
 });

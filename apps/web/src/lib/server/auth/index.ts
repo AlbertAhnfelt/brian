@@ -13,4 +13,4 @@ export const enabledProviders = (env: Env) => providers.filter((p) => p.enabled(
 export const findProvider = (env: Env, id: string) => enabledProviders(env).find((p) => p.id === id);
 
 /** Short-lived cookie holding the login's state, PKCE verifier and where to go afterwards. */
-export const LOGIN_COOKIE = 'brian_login';
+export const LOGIN_COOKIE = '__Host-brian_login';

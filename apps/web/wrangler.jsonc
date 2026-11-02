@@ -12,6 +12,7 @@
 	},
 	"observability": { "enabled": true },
 	"workers_dev": false,
+	"preview_urls": false,
 
 	// Shared with apps/server, which owns the schema.
 	"d1_databases": [{ "binding": "DB", "database_name": "brian-local", "database_id": "local-brian-db" }],

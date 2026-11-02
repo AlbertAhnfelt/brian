@@ -13,7 +13,7 @@
 <h2>What we store</h2>
 <ul>
 	<li><strong>Your account:</strong> your email address and name, and an ID from each login provider you use (Google, GitHub or Apple).</li>
-	<li><strong>Your Brian:</strong> the pages you or your agents write to it.</li>
+	<li><strong>Your Brian:</strong> the pages you or your agents write to it. Deleted pages stay in a trash for 30 days, then they are erased.</li>
 	<li><strong>Sign-in data:</strong> website sessions and the access you grant to apps like Claude or ChatGPT. We store only fingerprints (hashes) of the secret tokens, never the tokens themselves.</li>
 	<li><strong>Basic logs:</strong> request logs kept briefly to keep the service running and find bugs.</li>
 </ul>
@@ -38,7 +38,7 @@
 
 <h2>Your choices</h2>
 <p>
-	You can export your notes, disconnect apps and delete your account. Deleting your account erases your
+	You can export your notes (the trash included), disconnect apps and delete your account. Deleting your account erases your
 	Brian and your account data. Backups may keep a copy for a short while before they expire.
 </p>
 

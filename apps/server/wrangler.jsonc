@@ -9,6 +9,9 @@
 	// global_fetch_strictly_public: required to fetch MCP clients' Client ID Metadata Documents safely.
 	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
 	"observability": { "enabled": true },
+	// Only reachable through the mybrian.dev routes: no *.workers.dev or preview URLs.
+	"workers_dev": false,
+	"preview_urls": false,
 
 	// Local: the website (Vite on :5173) proxies the OAuth/MCP paths here, so the public origin is :5173.
 	"vars": { "BASE_URL": "http://localhost:5173" },

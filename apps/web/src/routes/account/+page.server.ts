@@ -1,4 +1,5 @@
 import { fail, redirect } from '@sveltejs/kit';
+import { SESSION_COOKIE } from '@brian/shared';
 import { env } from 'cloudflare:workers';
 import { account } from '#lib/server/account.ts';
 import type { Actions, PageServerLoad } from './$types';
@@ -26,7 +27,7 @@ export const actions: Actions = {
 	signOutEverywhere: async ({ locals, cookies }) => {
 		if (!locals.user) redirect(303, '/login');
 		await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(locals.user.id).run();
-		cookies.delete('brian_session', { path: '/' });
+		cookies.delete(SESSION_COOKIE, { path: '/', secure: true });
 		redirect(303, '/');
 	},
 
@@ -42,7 +43,7 @@ export const actions: Actions = {
 			env.DB.prepare('DELETE FROM accounts WHERE user_id = ?').bind(locals.user.id),
 			env.DB.prepare('DELETE FROM users WHERE id = ?').bind(locals.user.id)
 		]);
-		cookies.delete('brian_session', { path: '/' });
+		cookies.delete(SESSION_COOKIE, { path: '/', secure: true });
 		redirect(303, '/');
 	}
 };

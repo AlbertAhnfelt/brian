@@ -18,7 +18,7 @@ async function finish({ params, url, cookies, request }: RequestEvent): Promise<
 	try {
 		pending = JSON.parse(cookies.get(LOGIN_COOKIE) ?? 'null');
 	} catch {}
-	cookies.delete(LOGIN_COOKIE, { path: `/login/${provider.id}` });
+	cookies.delete(LOGIN_COOKIE, { path: '/', secure: true });
 
 	const form = request.method === 'POST' ? await request.formData() : undefined;
 	const param = (name: string) => (form ? form.get(name)?.toString() : url.searchParams.get(name)) ?? null;
@@ -35,6 +35,7 @@ async function finish({ params, url, cookies, request }: RequestEvent): Promise<
 
 	cookies.set(SESSION_COOKIE, await createSession(env.DB, user.id), {
 		path: '/',
+		secure: true,
 		httpOnly: true,
 		sameSite: 'lax',
 		maxAge: SESSION_DAYS * 24 * 60 * 60

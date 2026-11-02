@@ -1,6 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
 import { checkSize, ftsQuery, normalizePath, normalizePrefix, VaultError } from './paths';
 
+/** How long deleted pages stay in the trash. */
+export const TRASH_DAYS = 30;
+
 export interface Page {
 	path: string;
 	content: string;
@@ -56,8 +59,7 @@ export class Vault extends DurableObject<Env> {
 		const folders = new Set<string>();
 		const files: string[] = [];
 		const rows = this.sql.exec<{ path: string }>(
-			`SELECT path FROM pages WHERE substr(path, 1, ?) = ? ORDER BY path`,
-			base.length,
+			`SELECT path FROM pages WHERE substr(path, 1, length(?1)) = ?1 ORDER BY path`,
 			base
 		);
 		for (const { path } of rows) {
@@ -95,71 +97,84 @@ export class Vault extends DurableObject<Env> {
 	 */
 	write(path: string, content: string, expectedEtag?: string): Page {
 		return this.ctx.storage.transactionSync(() => {
-		const key = normalizePath(path);
-		checkSize(content);
-		const existing = this.find(key);
-		if (expectedEtag === undefined && existing) {
-			throw new VaultError(`"${key}" already exists. Read it and pass its etag to overwrite it.`);
-		}
-		if (expectedEtag !== undefined && !existing) throw new VaultError(`No page at "${key}" to overwrite.`);
-		if (expectedEtag !== undefined && existing && existing.etag !== expectedEtag) {
-			throw new VaultError(`"${key}" changed since you read it. Read it again and retry.`);
-		}
-		return this.put(key, content);
+			const key = normalizePath(path);
+			checkSize(content);
+			const existing = this.find(key);
+			if (expectedEtag === undefined && existing) {
+				throw new VaultError(`"${key}" already exists. Read it and pass its etag to overwrite it.`);
+			}
+			if (expectedEtag !== undefined && !existing) throw new VaultError(`No page at "${key}" to overwrite.`);
+			if (expectedEtag !== undefined && existing && existing.etag !== expectedEtag) {
+				throw new VaultError(`"${key}" changed since you read it. Read it again and retry.`);
+			}
+			return this.put(key, content);
 		});
 	}
 
 	/** Exact string replacement. `oldString` must match exactly once unless `replaceAll`. */
 	edit(path: string, oldString: string, newString: string, replaceAll = false): Page {
 		return this.ctx.storage.transactionSync(() => {
-		const page = this.read(path);
-		const count = oldString ? page.content.split(oldString).length - 1 : 0;
-		if (count === 0) throw new VaultError(`The text to replace was not found in "${page.path}".`);
-		if (count > 1 && !replaceAll) {
-			throw new VaultError(`The text to replace appears ${count} times in "${page.path}". Add context or set replace_all.`);
-		}
-		const content = replaceAll ? page.content.split(oldString).join(newString) : page.content.replace(oldString, () => newString);
-		checkSize(content);
-		return this.put(page.path, content);
+			const page = this.read(path);
+			const count = oldString ? page.content.split(oldString).length - 1 : 0;
+			if (count === 0) throw new VaultError(`The text to replace was not found in "${page.path}".`);
+			if (count > 1 && !replaceAll) {
+				throw new VaultError(`The text to replace appears ${count} times in "${page.path}". Add context or set replace_all.`);
+			}
+			const replacements = replaceAll ? count : 1;
+			checkSize(page.content, replacements * (newString.length - oldString.length));
+			const content = replaceAll ? page.content.split(oldString).join(newString) : page.content.replace(oldString, () => newString);
+			checkSize(content);
+			return this.put(page.path, content);
 		});
 	}
 
 	move(from: string, to: string): Page {
 		return this.ctx.storage.transactionSync(() => {
-		const page = this.read(from);
-		const target = normalizePath(to);
-		if (this.find(target)) throw new VaultError(`"${target}" already exists.`);
-		this.remove(page.path);
-		return this.put(target, page.content);
+			const page = this.read(from);
+			const target = normalizePath(to);
+			if (this.find(target)) throw new VaultError(`"${target}" already exists.`);
+			this.remove(page.path);
+			return this.put(target, page.content);
 		});
 	}
 
-	/** Soft delete: the page moves to the trash and can be restored later. */
+	/** Soft delete: the page moves to the trash for TRASH_DAYS days. */
 	delete(path: string): void {
 		this.ctx.storage.transactionSync(() => {
-		const page = this.read(path);
-		this.sql.exec(`INSERT INTO trash (path, content, deleted_at) VALUES (?, ?, ?)`, page.path, page.content, Date.now());
-		this.remove(page.path);
+			const page = this.read(path);
+			this.sql.exec(`DELETE FROM trash WHERE deleted_at < ?`, Date.now() - TRASH_DAYS * 24 * 60 * 60 * 1000);
+			this.sql.exec(`INSERT INTO trash (path, content, deleted_at) VALUES (?, ?, ?)`, page.path, page.content, Date.now());
+			this.remove(page.path);
 		});
 	}
 
-	/** Every page, for export. */
+	/** Every page, plus the trash under `.trash/<deleted at>/<path>`, for export. */
 	exportAll(): Page[] {
-		return this.sql
+		const trash = this.sql
+			.exec<{ path: string; content: string; deleted_at: number }>(`SELECT path, content, deleted_at FROM trash ORDER BY id`)
+			.toArray()
+			.map((row) => ({
+				path: `.trash/${new Date(row.deleted_at).toISOString().replace(/:/g, '-')}/${row.path}`,
+				content: row.content,
+				etag: '',
+				updatedAt: row.deleted_at
+			}));
+		const pages = this.sql
 			.exec<{ path: string; content: string; etag: string; updated_at: number }>(
 				`SELECT path, content, etag, updated_at FROM pages ORDER BY path`
 			)
 			.toArray()
 			.map((row) => ({ path: row.path, content: row.content, etag: row.etag, updatedAt: row.updated_at }));
+		return [...pages, ...trash];
 	}
 
 	/** Erases everything, trash included. Used when the account is deleted. */
 	async destroy(): Promise<void> {
 		// Clear the rows synchronously so the erase is visible at once, then drop the database.
 		this.ctx.storage.transactionSync(() => {
-			this.sql.exec(`DELETE FROM pages`);
-			this.sql.exec(`DELETE FROM pages_fts`);
-			this.sql.exec(`DELETE FROM trash`);
+				this.sql.exec(`DELETE FROM pages`);
+				this.sql.exec(`DELETE FROM pages_fts`);
+				this.sql.exec(`DELETE FROM trash`);
 		});
 		await this.ctx.storage.deleteAll();
 		// This instance may keep serving until it is evicted, so leave it a valid, empty database.

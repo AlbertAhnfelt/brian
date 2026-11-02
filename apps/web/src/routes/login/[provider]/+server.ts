@@ -12,7 +12,9 @@ export const GET: RequestHandler = async ({ params, url, cookies }) => {
 	const verifier = randomToken();
 	const next = safeNext(url.searchParams.get('next'));
 	cookies.set(LOGIN_COOKIE, JSON.stringify({ state, verifier, next }), {
-		path: `/login/${provider.id}`,
+		// __Host- cookies must be Secure with Path=/, so dev.mybrian.dev can never set or shadow them.
+		path: '/',
+		secure: true,
 		httpOnly: true,
 		// Apple posts the callback from its own site, and browsers only send SameSite=None cookies on that.
 		sameSite: provider.callback === 'POST' ? 'none' : 'lax',

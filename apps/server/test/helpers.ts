@@ -1,4 +1,4 @@
-import { createSession, pkceChallenge, signIn, type User } from '@brian/shared';
+import { createSession, pkceChallenge, SESSION_COOKIE, signIn, type User } from '@brian/shared';
 import { env, exports } from 'cloudflare:workers';
 
 export const ORIGIN = env.BASE_URL;
@@ -46,7 +46,7 @@ export class Jar {
 export async function signedInUser(email: string): Promise<{ user: User; jar: Jar }> {
 	const user = await signIn(env.DB, { provider: 'github', providerUserId: email, email, name: null });
 	const token = await createSession(env.DB, user.id);
-	return { user, jar: new Jar({ brian_session: token }) };
+	return { user, jar: new Jar({ [SESSION_COOKIE]: token }) };
 }
 
 export async function registerClient(name = 'Test client'): Promise<string> {

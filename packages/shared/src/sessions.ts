@@ -2,7 +2,7 @@ import { randomToken, sha256Hex } from './crypto';
 import type { User } from './users';
 
 /** Website session cookie. The server's /authorize reads it too (same origin). */
-export const SESSION_COOKIE = 'brian_session';
+export const SESSION_COOKIE = '__Host-brian_session';
 export const SESSION_DAYS = 30;
 
 /** Creates a session and returns the token for the cookie. Only its hash is stored. */
