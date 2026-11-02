@@ -1,8 +1,48 @@
 {
 	"$schema": "./node_modules/wrangler/config-schema.json",
+	// Top level = local development (`pnpm dev`). `env.dev` and `env.prod` are the deployed
+	// environments: `wrangler deploy --env dev|prod`. Bindings and vars are NOT inherited by
+	// environments, so each one lists its own.
 	"name": "brian-server",
 	"main": "src/index.ts",
-	"compatibility_date": "2026-11-01",
-	"compatibility_flags": ["nodejs_compat"],
-	"observability": { "enabled": true }
+	"compatibility_date": "2026-10-30",
+	// global_fetch_strictly_public: required to fetch MCP clients' Client ID Metadata Documents safely.
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"observability": { "enabled": true },
+
+	// Local: the website (Vite on :5173) proxies the OAuth/MCP paths here, so the public origin is :5173.
+	"vars": { "BASE_URL": "http://localhost:5173" },
+	"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "local-oauth-kv" }],
+	"d1_databases": [
+		{ "binding": "DB", "database_name": "brian-local", "database_id": "local-brian-db", "migrations_dir": "migrations" }
+	],
+
+	"env": {
+		"dev": {
+			"vars": { "BASE_URL": "https://dev.mybrian.dev" },
+			"routes": [
+				{ "pattern": "dev.mybrian.dev/mcp*", "zone_name": "mybrian.dev" },
+				{ "pattern": "dev.mybrian.dev/authorize*", "zone_name": "mybrian.dev" },
+				{ "pattern": "dev.mybrian.dev/oauth/*", "zone_name": "mybrian.dev" },
+				{ "pattern": "dev.mybrian.dev/.well-known/oauth-*", "zone_name": "mybrian.dev" }
+			],
+			"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "REPLACE_WITH_DEV_KV_ID" }],
+			"d1_databases": [
+				{ "binding": "DB", "database_name": "brian-dev", "database_id": "REPLACE_WITH_DEV_D1_ID", "migrations_dir": "migrations" }
+			]
+		},
+		"prod": {
+			"vars": { "BASE_URL": "https://mybrian.dev" },
+			"routes": [
+				{ "pattern": "mybrian.dev/mcp*", "zone_name": "mybrian.dev" },
+				{ "pattern": "mybrian.dev/authorize*", "zone_name": "mybrian.dev" },
+				{ "pattern": "mybrian.dev/oauth/*", "zone_name": "mybrian.dev" },
+				{ "pattern": "mybrian.dev/.well-known/oauth-*", "zone_name": "mybrian.dev" }
+			],
+			"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "REPLACE_WITH_PROD_KV_ID" }],
+			"d1_databases": [
+				{ "binding": "DB", "database_name": "brian-prod", "database_id": "REPLACE_WITH_PROD_D1_ID", "migrations_dir": "migrations" }
+			]
+		}
+	}
 }

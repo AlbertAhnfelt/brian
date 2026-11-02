@@ -1,0 +1,81 @@
+:root {
+	--bg: #faf8f5;
+	--ink: #1a1a1a;
+	--muted: #75716b;
+	--line: #e8e3dc;
+	--surface: #ffffff;
+	--collar: #e3120b;
+	--tag: #f5b800;
+
+	--font: 'EB Garamond Variable', Garamond, Georgia, serif;
+
+	color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--ink);
+	font-family: var(--font);
+	font-size: 18px;
+	-webkit-font-smoothing: antialiased;
+}
+
+a {
+	color: inherit;
+}
+
+h1 {
+	margin: 0;
+	font-size: 2.25rem;
+	font-weight: 500;
+	letter-spacing: -0.01em;
+}
+
+p {
+	line-height: 1.6;
+}
+
+.button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	padding: 0.65rem 1.1rem;
+	border: 1px solid var(--ink);
+	border-radius: 999px;
+	background: var(--ink);
+	color: var(--bg);
+	font: inherit;
+	font-size: 0.95rem;
+	text-decoration: none;
+	cursor: pointer;
+	transition:
+		transform 120ms ease,
+		background 120ms ease;
+}
+
+.button:hover {
+	transform: translateY(-1px);
+}
+
+.button.ghost {
+	background: transparent;
+	color: var(--ink);
+}
+
+.button.ghost:hover {
+	background: var(--surface);
+}
+
+:focus-visible {
+	outline: 2px solid var(--tag);
+	outline-offset: 2px;
+}

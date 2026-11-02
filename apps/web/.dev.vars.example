@@ -1,0 +1,11 @@
+# Local login credentials. Each environment (local, dev, prod) has its own OAuth apps.
+# Providers without credentials are hidden from the login page.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+# Apple needs HTTPS on a real domain, so it only works in dev/prod.
+APPLE_CLIENT_ID=
+APPLE_TEAM_ID=
+APPLE_KEY_ID=
+APPLE_PRIVATE_KEY=

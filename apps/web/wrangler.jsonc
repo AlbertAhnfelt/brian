@@ -1,15 +1,30 @@
 {
 	"$schema": "./node_modules/wrangler/config-schema.json",
+	// Top level = local development (`pnpm dev`). `env.dev` and `env.prod` are the deployed
+	// environments: `wrangler deploy --env dev|prod`. Bindings are NOT inherited by environments.
 	"name": "brian-web",
-	"compatibility_date": "2026-11-01",
-	"compatibility_flags": [
-		"nodejs_als"
-	],
+	"compatibility_date": "2026-10-30",
+	"compatibility_flags": ["nodejs_als"],
 	"main": ".svelte-kit/cloudflare/_worker.js",
 	"assets": {
 		"binding": "ASSETS",
 		"directory": ".svelte-kit/cloudflare"
 	},
-	"workers_dev": true,
-	"preview_urls": true
+	"observability": { "enabled": true },
+	"workers_dev": false,
+
+	// Shared with apps/server, which owns the schema.
+	"d1_databases": [{ "binding": "DB", "database_name": "brian-local", "database_id": "local-brian-db" }],
+
+	"env": {
+		"dev": {
+			// Everything on the host goes here, except the OAuth/MCP paths routed to brian-server-dev.
+			"routes": [{ "pattern": "dev.mybrian.dev/*", "zone_name": "mybrian.dev" }],
+			"d1_databases": [{ "binding": "DB", "database_name": "brian-dev", "database_id": "REPLACE_WITH_DEV_D1_ID" }]
+		},
+		"prod": {
+			"routes": [{ "pattern": "mybrian.dev/*", "zone_name": "mybrian.dev" }],
+			"d1_databases": [{ "binding": "DB", "database_name": "brian-prod", "database_id": "REPLACE_WITH_PROD_D1_ID" }]
+		}
+	}
 }

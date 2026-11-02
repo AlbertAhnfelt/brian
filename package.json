@@ -4,9 +4,11 @@
 	"type": "module",
 	"packageManager": "pnpm@11.6.0",
 	"scripts": {
+		"dev": "pnpm -r --parallel dev",
 		"dev:web": "pnpm --filter @brian/web dev",
 		"dev:server": "pnpm --filter @brian/server dev",
 		"check": "pnpm -r check",
-		"build": "pnpm -r build"
+		"build": "pnpm -r build",
+		"db:migrate": "pnpm --filter @brian/server db:migrate"
 	}
 }

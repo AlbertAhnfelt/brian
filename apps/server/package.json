@@ -4,13 +4,24 @@
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
-		"dev": "wrangler dev",
-		"deploy": "wrangler deploy",
+		"dev": "wrangler dev --port 8787 --persist-to ../../.wrangler/state",
+		"deploy:dev": "wrangler deploy --env dev",
+		"deploy:prod": "wrangler deploy --env prod",
+		"db:migrate": "wrangler d1 migrations apply DB --local --persist-to ../../.wrangler/state",
+		"db:migrate:dev": "wrangler d1 migrations apply DB --remote --env dev",
+		"db:migrate:prod": "wrangler d1 migrations apply DB --remote --env prod",
 		"check": "wrangler types --check && tsc --noEmit",
 		"gen": "wrangler types"
 	},
 	"devDependencies": {
 		"typescript": "^6.0.3",
 		"wrangler": "^4.97.0"
+	},
+	"dependencies": {
+		"@cloudflare/workers-oauth-provider": "^1.2.4",
+		"@modelcontextprotocol/server": "2.4.0",
+		"agents": "^0.32.0",
+		"zod": "^4.6.7",
+		"@brian/shared": "workspace:*"
 	}
 }
