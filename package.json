@@ -9,6 +9,7 @@
 		"dev:server": "pnpm --filter @brian/server dev",
 		"check": "pnpm -r check",
 		"build": "pnpm -r build",
-		"db:migrate": "pnpm --filter @brian/server db:migrate"
+		"db:migrate": "pnpm --filter @brian/server db:migrate",
+		"test": "pnpm -r test"
 	}
 }

@@ -35,6 +35,7 @@ pnpm install
 cp apps/web/.dev.vars.example apps/web/.dev.vars   # login credentials; unset providers are hidden
 pnpm db:migrate
 pnpm dev                                           # open http://localhost:5173
+pnpm test                                          # server tests run in the Workers runtime
 ```
 
 Local OAuth redirect URIs: `http://localhost:5173/login/google/callback` and `http://localhost:5173/login/github/callback`. Apple only works in dev and prod.

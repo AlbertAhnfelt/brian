@@ -11,17 +11,21 @@
 		"db:migrate:dev": "wrangler d1 migrations apply DB --remote --env dev",
 		"db:migrate:prod": "wrangler d1 migrations apply DB --remote --env prod",
 		"check": "wrangler types --check && tsc --noEmit",
-		"gen": "wrangler types"
+		"gen": "wrangler types",
+		"test": "vitest run",
+		"test:watch": "vitest"
 	},
 	"devDependencies": {
+		"@cloudflare/vitest-plugin": "^1.4.11",
 		"typescript": "^6.0.3",
+		"vitest": "^5.0.5",
 		"wrangler": "^4.97.0"
 	},
 	"dependencies": {
+		"@brian/shared": "workspace:*",
 		"@cloudflare/workers-oauth-provider": "^1.2.4",
 		"@modelcontextprotocol/server": "2.4.0",
 		"agents": "^0.32.0",
-		"zod": "^4.6.7",
-		"@brian/shared": "workspace:*"
+		"zod": "^4.6.7"
 	}
 }

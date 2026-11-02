@@ -10,7 +10,8 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "wrangler types --check && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"gen": "wrangler types"
+		"gen": "wrangler types",
+		"test": "vitest run"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-cloudflare": "^8.0.0",
@@ -20,6 +21,7 @@
 		"svelte-check": "^4.6.0",
 		"typescript": "^6.0.3",
 		"vite": "^8.3.0",
+		"vitest": "^5.0.5",
 		"wrangler": "^4.97.0"
 	},
 	"imports": {
