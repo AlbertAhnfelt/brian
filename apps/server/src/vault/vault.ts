@@ -29,6 +29,10 @@ export class Vault extends DurableObject<Env> {
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
+		this.migrate();
+	}
+
+	private migrate(): void {
 		this.sql.exec(`
 			CREATE TABLE IF NOT EXISTS pages (
 				path TEXT PRIMARY KEY,
@@ -137,6 +141,29 @@ export class Vault extends DurableObject<Env> {
 		this.sql.exec(`INSERT INTO trash (path, content, deleted_at) VALUES (?, ?, ?)`, page.path, page.content, Date.now());
 		this.remove(page.path);
 		});
+	}
+
+	/** Every page, for export. */
+	exportAll(): Page[] {
+		return this.sql
+			.exec<{ path: string; content: string; etag: string; updated_at: number }>(
+				`SELECT path, content, etag, updated_at FROM pages ORDER BY path`
+			)
+			.toArray()
+			.map((row) => ({ path: row.path, content: row.content, etag: row.etag, updatedAt: row.updated_at }));
+	}
+
+	/** Erases everything, trash included. Used when the account is deleted. */
+	async destroy(): Promise<void> {
+		// Clear the rows synchronously so the erase is visible at once, then drop the database.
+		this.ctx.storage.transactionSync(() => {
+			this.sql.exec(`DELETE FROM pages`);
+			this.sql.exec(`DELETE FROM pages_fts`);
+			this.sql.exec(`DELETE FROM trash`);
+		});
+		await this.ctx.storage.deleteAll();
+		// This instance may keep serving until it is evicted, so leave it a valid, empty database.
+		this.migrate();
 	}
 
 	private find(path: string): Page | null {

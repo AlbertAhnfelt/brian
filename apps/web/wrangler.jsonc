@@ -15,16 +15,20 @@
 
 	// Shared with apps/server, which owns the schema.
 	"d1_databases": [{ "binding": "DB", "database_name": "brian-local", "database_id": "local-brian-db" }],
+	// Account management RPC on apps/server (connected apps, export, deletion).
+	"services": [{ "binding": "SERVER", "service": "brian-server", "entrypoint": "Account" }],
 
 	"env": {
 		"dev": {
 			// Everything on the host goes here, except the OAuth/MCP paths routed to brian-server-dev.
 			"routes": [{ "pattern": "dev.mybrian.dev/*", "zone_name": "mybrian.dev" }],
-			"d1_databases": [{ "binding": "DB", "database_name": "brian-dev", "database_id": "REPLACE_WITH_DEV_D1_ID" }]
+			"d1_databases": [{ "binding": "DB", "database_name": "brian-dev", "database_id": "REPLACE_WITH_DEV_D1_ID" }],
+			"services": [{ "binding": "SERVER", "service": "brian-server-dev", "entrypoint": "Account" }]
 		},
 		"prod": {
 			"routes": [{ "pattern": "mybrian.dev/*", "zone_name": "mybrian.dev" }],
-			"d1_databases": [{ "binding": "DB", "database_name": "brian-prod", "database_id": "REPLACE_WITH_PROD_D1_ID" }]
+			"d1_databases": [{ "binding": "DB", "database_name": "brian-prod", "database_id": "REPLACE_WITH_PROD_D1_ID" }],
+			"services": [{ "binding": "SERVER", "service": "brian-server-prod", "entrypoint": "Account" }]
 		}
 	}
 }

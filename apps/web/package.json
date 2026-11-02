@@ -27,7 +27,8 @@
 		"#lib/*": "./src/lib/*"
 	},
 	"dependencies": {
+		"@brian/shared": "workspace:*",
 		"@fontsource-variable/eb-garamond": "^5.3.0",
-		"@brian/shared": "workspace:*"
+		"fflate": "^0.8.3"
 	}
 }

@@ -38,3 +38,7 @@ pnpm dev                                           # open http://localhost:5173
 ```
 
 Local OAuth redirect URIs: `http://localhost:5173/login/google/callback` and `http://localhost:5173/login/github/callback`. Apple only works in dev and prod.
+
+### Troubleshooting
+
+If the website seems to talk to old server code (stale data, missing logs), an old `wrangler dev` is probably still registered in Wrangler's dev registry. Stop it with `pkill -f "wrangler.js dev"` and run `pnpm dev` again.
