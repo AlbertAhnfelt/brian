@@ -31,6 +31,11 @@
 	{@render children()}
 </main>
 
+<footer>
+	<a href="/privacy">privacy</a>
+	<a href="/terms">terms</a>
+</footer>
+
 <style>
 	header {
 		display: flex;
@@ -84,5 +89,23 @@
 		max-width: 960px;
 		margin: 0 auto;
 		padding: 0 1.5rem 4rem;
+	}
+
+	footer {
+		display: flex;
+		gap: 1.25rem;
+		max-width: 960px;
+		margin: 0 auto;
+		padding: 2rem 1.5rem;
+		font-size: 0.85rem;
+	}
+
+	footer a {
+		color: var(--muted);
+		text-decoration: none;
+	}
+
+	footer a:hover {
+		color: var(--ink);
 	}
 </style>
