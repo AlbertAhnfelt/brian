@@ -23,7 +23,7 @@
 		"dev": {
 			// Everything on the host goes here, except the OAuth/MCP paths routed to brian-server-dev.
 			"routes": [{ "pattern": "dev.mybrian.dev/*", "zone_name": "mybrian.dev" }],
-			"d1_databases": [{ "binding": "DB", "database_name": "brian-dev", "database_id": "REPLACE_WITH_DEV_D1_ID" }],
+			"d1_databases": [{ "binding": "DB", "database_name": "brian-dev", "database_id": "37a7eb4b-b045-4159-9ba9-593c9b2ea89e" }],
 			"services": [{ "binding": "SERVER", "service": "brian-server-dev", "entrypoint": "Account" }]
 		},
 		"prod": {

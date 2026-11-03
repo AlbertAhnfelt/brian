@@ -33,9 +33,9 @@
 				{ "pattern": "dev.mybrian.dev/oauth/*", "zone_name": "mybrian.dev" },
 				{ "pattern": "dev.mybrian.dev/.well-known/oauth-*", "zone_name": "mybrian.dev" }
 			],
-			"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "REPLACE_WITH_DEV_KV_ID" }],
+			"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "d0a482e451b245098fb39ba5fa660cc3" }],
 			"d1_databases": [
-				{ "binding": "DB", "database_name": "brian-dev", "database_id": "REPLACE_WITH_DEV_D1_ID", "migrations_dir": "migrations" }
+				{ "binding": "DB", "database_name": "brian-dev", "database_id": "37a7eb4b-b045-4159-9ba9-593c9b2ea89e", "migrations_dir": "migrations" }
 			]
 		},
 		"prod": {

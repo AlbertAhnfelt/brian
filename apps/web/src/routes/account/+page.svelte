@@ -23,6 +23,15 @@
 			<li>{providerNames[login.provider] ?? login.provider} <span class="muted">· {login.email}</span></li>
 		{/each}
 	</ul>
+	{#if data.addable.length}
+		<p class="add">
+			{#each data.addable as provider (provider.id)}
+				<a href="/login/{provider.id}?link" class="button ghost small" data-sveltekit-reload>
+					Add {provider.label}
+				</a>
+			{/each}
+		</p>
+	{/if}
 
 	<h2>Connected apps</h2>
 	{#if data.connections.length}
@@ -100,6 +109,12 @@
 	.small {
 		padding: 0.3rem 0.8rem;
 		font-size: 0.85rem;
+	}
+
+	.add {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
 	}
 
 	.delete {

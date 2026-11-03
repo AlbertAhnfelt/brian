@@ -15,8 +15,10 @@ export interface Profile {
 }
 
 /**
- * Finds or creates the user for a provider login. A new provider account joins an existing
- * user with the same verified email; otherwise a new user is created.
+ * Finds or creates the user for a provider login. A provider account that isn't linked yet
+ * always gets a new user: matching emails are never joined automatically, because whoever
+ * later controls an old address (a reassigned mailbox, a lapsed domain) could take over the
+ * account. Linking happens only from a signed-in session, with linkLogin().
  */
 export async function signIn(db: D1Database, profile: Profile): Promise<User> {
 	const known = await db
@@ -30,26 +32,31 @@ export async function signIn(db: D1Database, profile: Profile): Promise<User> {
 	if (known) return known;
 
 	const email = profile.email.toLowerCase();
-	const existing = await db
-		.prepare('SELECT id, email, name FROM users WHERE email = ? ORDER BY created_at LIMIT 1')
-		.bind(email)
-		.first<User>();
-	const user: User = existing ?? { id: crypto.randomUUID(), email, name: profile.name };
-
-	const statements = [];
-	if (!existing) {
-		statements.push(
-			db.prepare('INSERT INTO users (id, email, name) VALUES (?, ?, ?)').bind(user.id, user.email, user.name)
-		);
-	}
-	statements.push(
+	const user: User = { id: crypto.randomUUID(), email, name: profile.name };
+	await db.batch([
+		db.prepare('INSERT INTO users (id, email, name) VALUES (?, ?, ?)').bind(user.id, user.email, user.name),
 		db
-			.prepare(
-				`INSERT INTO accounts (provider, provider_user_id, user_id, email) VALUES (?, ?, ?, ?)
-				 ON CONFLICT (provider, provider_user_id) DO NOTHING`
-			)
+			.prepare('INSERT INTO accounts (provider, provider_user_id, user_id, email) VALUES (?, ?, ?, ?)')
 			.bind(profile.provider, profile.providerUserId, user.id, email)
-	);
-	await db.batch(statements);
+	]);
 	return user;
+}
+
+/**
+ * Adds a provider login to an existing, signed-in user. Returns 'taken' if that provider
+ * account already belongs to someone else.
+ */
+export async function linkLogin(db: D1Database, userId: string, profile: Profile): Promise<'linked' | 'taken'> {
+	await db
+		.prepare(
+			`INSERT INTO accounts (provider, provider_user_id, user_id, email) VALUES (?, ?, ?, ?)
+			 ON CONFLICT (provider, provider_user_id) DO NOTHING`
+		)
+		.bind(profile.provider, profile.providerUserId, userId, profile.email.toLowerCase())
+		.run();
+	const owner = await db
+		.prepare('SELECT user_id FROM accounts WHERE provider = ? AND provider_user_id = ?')
+		.bind(profile.provider, profile.providerUserId)
+		.first<string>('user_id');
+	return owner === userId ? 'linked' : 'taken';
 }

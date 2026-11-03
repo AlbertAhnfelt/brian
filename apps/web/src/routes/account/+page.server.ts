@@ -2,6 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { SESSION_COOKIE } from '@brian/shared';
 import { env } from 'cloudflare:workers';
 import { account } from '#lib/server/account.ts';
+import { enabledProviders } from '#lib/server/auth/index.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -12,7 +13,11 @@ export const load: PageServerLoad = async ({ locals }) => {
 			.all<{ provider: string; email: string }>(),
 		account().connections(locals.user.id)
 	]);
-	return { logins: logins.results, connections };
+	const linked = new Set(logins.results.map((l) => l.provider));
+	const addable = enabledProviders(env)
+		.filter((p) => !linked.has(p.id))
+		.map(({ id, label }) => ({ id, label }));
+	return { logins: logins.results, addable, connections };
 };
 
 export const actions: Actions = {

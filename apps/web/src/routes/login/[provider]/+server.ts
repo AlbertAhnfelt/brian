@@ -4,14 +4,16 @@ import { env } from 'cloudflare:workers';
 import { findProvider, LOGIN_COOKIE } from '#lib/server/auth/index.ts';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = async ({ params, url, cookies }) => {
+export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
 	const provider = findProvider(env, params.provider);
 	if (!provider) error(404, 'Unknown login method');
 
 	const state = randomToken();
 	const verifier = randomToken();
 	const next = safeNext(url.searchParams.get('next'));
-	cookies.set(LOGIN_COOKIE, JSON.stringify({ state, verifier, next }), {
+	// `?link` from /account adds this provider to the signed-in user instead of signing in.
+	const link = url.searchParams.has('link') && locals.user ? locals.user.id : undefined;
+	cookies.set(LOGIN_COOKIE, JSON.stringify({ state, verifier, next, link }), {
 		// __Host- cookies must be Secure with Path=/, so dev.mybrian.dev can never set or shadow them.
 		path: '/',
 		secure: true,

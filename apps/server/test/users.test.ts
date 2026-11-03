@@ -1,4 +1,4 @@
-import { createSession, deleteSession, getSessionUser, signIn } from '@brian/shared';
+import { createSession, deleteSession, getSessionUser, linkLogin, signIn } from '@brian/shared';
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
@@ -10,20 +10,34 @@ describe('signIn', () => {
 		expect(first.email).toBe('ann@example.com');
 	});
 
-	it('links a second provider with the same verified email', async () => {
+	it('never joins a new login to an existing user by email', async () => {
 		const google = await signIn(env.DB, { provider: 'google', providerUserId: 'g2', email: 'bo@example.com', name: null });
 		const github = await signIn(env.DB, { provider: 'github', providerUserId: '99', email: 'BO@example.com', name: null });
-		expect(github.id).toBe(google.id);
-		const { results } = await env.DB.prepare('SELECT provider FROM accounts WHERE user_id = ? ORDER BY provider')
-			.bind(google.id)
-			.all<{ provider: string }>();
-		expect(results.map((r) => r.provider)).toEqual(['github', 'google']);
+		expect(github.id).not.toBe(google.id);
 	});
 
 	it('keeps different emails apart', async () => {
 		const a = await signIn(env.DB, { provider: 'apple', providerUserId: 'a1', email: 'x@privaterelay.appleid.com', name: null });
 		const b = await signIn(env.DB, { provider: 'google', providerUserId: 'g3', email: 'x@example.com', name: null });
 		expect(a.id).not.toBe(b.id);
+	});
+});
+
+describe('linkLogin', () => {
+	it('adds a provider to a signed-in user, who then signs in with it', async () => {
+		const user = await signIn(env.DB, { provider: 'google', providerUserId: 'l1', email: 'cy@example.com', name: null });
+		const github = { provider: 'github', providerUserId: 'l1-gh', email: 'other@example.com', name: null } as const;
+		expect(await linkLogin(env.DB, user.id, github)).toBe('linked');
+		expect(await linkLogin(env.DB, user.id, github)).toBe('linked');
+		expect((await signIn(env.DB, github)).id).toBe(user.id);
+	});
+
+	it('refuses a provider login that belongs to someone else', async () => {
+		const owner = await signIn(env.DB, { provider: 'github', providerUserId: 'l2', email: 'd@example.com', name: null });
+		const other = await signIn(env.DB, { provider: 'google', providerUserId: 'l2-g', email: 'e@example.com', name: null });
+		const taken = { provider: 'github', providerUserId: 'l2', email: 'd@example.com', name: null } as const;
+		expect(await linkLogin(env.DB, other.id, taken)).toBe('taken');
+		expect((await signIn(env.DB, taken)).id).toBe(owner.id);
 	});
 });
 
