@@ -4,6 +4,8 @@ export interface User {
 	id: string;
 	email: string;
 	name: string | null;
+	/** Null until the user picks one, right after their first login. */
+	username: string | null;
 }
 
 /** What a login provider tells us about the person. `email` must be verified by the provider. */
@@ -23,7 +25,7 @@ export interface Profile {
 export async function signIn(db: D1Database, profile: Profile): Promise<User> {
 	const known = await db
 		.prepare(
-			`SELECT users.id, users.email, users.name FROM accounts
+			`SELECT users.id, users.email, users.name, users.username FROM accounts
 			 JOIN users ON users.id = accounts.user_id
 			 WHERE accounts.provider = ? AND accounts.provider_user_id = ?`
 		)
@@ -32,7 +34,7 @@ export async function signIn(db: D1Database, profile: Profile): Promise<User> {
 	if (known) return known;
 
 	const email = profile.email.toLowerCase();
-	const user: User = { id: crypto.randomUUID(), email, name: profile.name };
+	const user: User = { id: crypto.randomUUID(), email, name: profile.name, username: null };
 	await db.batch([
 		db.prepare('INSERT INTO users (id, email, name) VALUES (?, ?, ?)').bind(user.id, user.email, user.name),
 		db

@@ -20,7 +20,7 @@ export async function getSessionUser(db: D1Database, token: string | undefined |
 	if (!token) return null;
 	return db
 		.prepare(
-			`SELECT users.id, users.email, users.name FROM sessions
+			`SELECT users.id, users.email, users.name, users.username FROM sessions
 			 JOIN users ON users.id = sessions.user_id
 			 WHERE sessions.id_hash = ? AND sessions.expires_at > unixepoch()`
 		)

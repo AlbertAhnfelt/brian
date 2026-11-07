@@ -1,4 +1,4 @@
-import { createSession, pkceChallenge, SESSION_COOKIE, signIn, type User } from '@brian/shared';
+import { createSession, pkceChallenge, SESSION_COOKIE, setUsername, signIn, type User } from '@brian/shared';
 import { env, exports } from 'cloudflare:workers';
 
 export const ORIGIN = env.BASE_URL;
@@ -42,9 +42,20 @@ export class Jar {
 	}
 }
 
-/** A user with a website session, as if they had logged in with GitHub. */
-export async function signedInUser(email: string): Promise<{ user: User; jar: Jar }> {
+/**
+ * A user with a website session, as if they had logged in with GitHub and picked a username
+ * (random unless given; pass null for a user who hasn't picked one yet).
+ */
+export async function signedInUser(
+	email: string,
+	username: string | null = `u${crypto.randomUUID().slice(0, 8)}`
+): Promise<{ user: User; jar: Jar }> {
 	const user = await signIn(env.DB, { provider: 'github', providerUserId: email, email, name: null });
+	if (username) {
+		const result = await setUsername(env.DB, user.id, username);
+		if (!result.ok) throw new Error(result.message);
+		user.username = result.username;
+	}
 	const token = await createSession(env.DB, user.id);
 	return { user, jar: new Jar({ [SESSION_COOKIE]: token }) };
 }

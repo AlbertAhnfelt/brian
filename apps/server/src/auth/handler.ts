@@ -16,8 +16,13 @@ export const authHandler = {
 		try {
 			const session = await getSessionUser(env.DB, readCookie(request.headers.get('Cookie'), SESSION_COOKIE));
 			const user = session && loginAllowed(env, session.email) ? session : null;
-			if (request.method === 'GET') return user ? await showConsent(request, env, user) : toLogin(request, env);
-			if (request.method === 'POST' && user) return await submitConsent(request, env, user);
+			if (request.method === 'GET') {
+				if (!user) return toWebsite(request, env, '/login');
+				// The username names the user's brian, so it has to exist before any app connects.
+				if (!user.username) return toWebsite(request, env, '/welcome');
+				return await showConsent(request, env, user);
+			}
+			if (request.method === 'POST' && user?.username) return await submitConsent(request, env, user);
 			if (request.method === 'POST') return html(errorPage('Your session ended. Start connecting again from your app.'), 401);
 			return new Response('Method not allowed', { status: 405 });
 		} catch (error) {
@@ -34,12 +39,12 @@ export const authHandler = {
 	}
 };
 
-/** Sends the user to the website to sign in, then back to this exact /authorize request. */
-function toLogin(request: Request, env: Env): Response {
+/** Sends the user to a website page (sign-in, username), then back to this exact /authorize request. */
+function toWebsite(request: Request, env: Env, page: '/login' | '/welcome'): Response {
 	const { pathname, search } = new URL(request.url);
-	const login = new URL('/login', env.BASE_URL);
-	login.searchParams.set('next', pathname + search);
-	return Response.redirect(login.toString(), 302);
+	const target = new URL(page, env.BASE_URL);
+	target.searchParams.set('next', pathname + search);
+	return Response.redirect(target.toString(), 302);
 }
 
 async function showConsent(request: Request, env: Env, user: User): Promise<Response> {
