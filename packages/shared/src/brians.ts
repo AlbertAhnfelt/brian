@@ -6,9 +6,6 @@ export type Visibility = 'private' | 'public';
 export const ROLES: readonly Role[] = ['owner', 'editor', 'viewer'];
 export const VISIBILITIES: readonly Visibility[] = ['private', 'public'];
 
-/** Brians a user can be a member of, owner or not. Keeps search, which asks each one, fast. */
-export const MAX_MEMBERSHIPS = 50;
-
 /** A shared brian as one of its members sees it. */
 export interface BrianSummary {
 	id: string;

@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { getMcpAuthContext } from 'agents/mcp/server';
 import { env } from 'cloudflare:workers';
+import { LIMITS } from '@brian/shared';
 import { z } from 'zod';
 import { Brian, instructions } from '../brian/router';
 import type { Props } from '../props';
@@ -59,7 +60,7 @@ export async function createServer(): Promise<McpServer> {
 		{
 			description:
 				'Full-text search over page paths and contents in every brian, best matches first. Every word must match; end a word with * for prefix matching. Returns paths with snippets: read_page the ones you need before acting on them.',
-			inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().min(1).max(50).default(20) })
+			inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().min(1).max(LIMITS.searchResults).default(20) })
 		},
 		({ query, limit }) =>
 			run(async () => {
@@ -85,7 +86,7 @@ export async function createServer(): Promise<McpServer> {
 		'write_page',
 		{
 			description:
-				'Create a page, or fully overwrite one. Pages are markdown: paths must end in .md, and each brian holds up to 10,000 pages. Shared brians you view are read-only. To create: omit expected_etag (fails if the page exists). To overwrite: pass the etag from read_page (fails if the page changed since; re-read and retry). For small changes prefer edit_page.',
+				`Create a page, or fully overwrite one. Pages are markdown: paths must end in .md, and each brian holds up to ${LIMITS.pagesPerBrian.toLocaleString('en-US')} pages. Shared brians you view are read-only. To create: omit expected_etag (fails if the page exists). To overwrite: pass the etag from read_page (fails if the page changed since; re-read and retry). For small changes prefer edit_page.`,
 			inputSchema: z.object({ path: z.string().min(1), content: z.string(), expected_etag: z.string().optional() })
 		},
 		({ path, content, expected_etag }) =>

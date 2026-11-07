@@ -1,14 +1,14 @@
 import { randomToken, sha256Hex } from './crypto';
+import { LIMITS } from './limits';
 import type { User } from './users';
 
 /** Website session cookie. The server's /authorize reads it too (same origin). */
 export const SESSION_COOKIE = '__Host-brian_session';
-export const SESSION_DAYS = 30;
 
 /** Creates a session and returns the token for the cookie. Only its hash is stored. */
 export async function createSession(db: D1Database, userId: string): Promise<string> {
 	const token = randomToken();
-	const expiresAt = Math.floor(Date.now() / 1000) + SESSION_DAYS * 24 * 60 * 60;
+	const expiresAt = Math.floor(Date.now() / 1000) + LIMITS.sessionDays * 24 * 60 * 60;
 	await db
 		.prepare('INSERT INTO sessions (id_hash, user_id, expires_at) VALUES (?, ?, ?)')
 		.bind(await sha256Hex(token), userId, expiresAt)

@@ -146,25 +146,26 @@ export class Brian {
 	}
 }
 
-/** The MCP server's instructions: how this user's Brian is laid out, and the rules for agents. */
+/**
+ * The MCP server's instructions: only what always holds, plus this user's shared brians.
+ * Everything that changes with the user lives in the BRIAN.md files, which agents keep current.
+ * Roles are described here, not enforced here: the router refuses what a role can't do.
+ */
 export function instructions(brian: Brian): string {
 	const me = brian.username ?? 'the user';
 	const shared = brian.brians.length
-		? brian.brians
-				.map((b) => `  - brian/${b.mount}/ — "${b.name}", ${b.role}${b.role === 'viewer' ? ' (read-only)' : ''}, ${b.visibility}`)
-				.join('\n')
-		: '  (none yet)';
-	return `This is ${me}'s Brian: their knowledge, as markdown pages (paths like notes/today.md).
+		? brian.brians.map((b) => `- brian/${b.mount}/ — "${b.name}" (${b.visibility}). You are ${b.role === 'owner' ? 'the owner' : `a ${b.role}`}.`).join('\n')
+		: '- (none yet)';
+	return `This is ${me}'s Brian: their knowledge, as markdown pages.
 
-Layout:
-- Everything outside brian/ is ${me}'s own notes, written mainly by them. Edit pages there only when ${me} asks you to or is working on that page with you. Don't add AI-written pages there.
-- brian/${me}/ is yours to write in freely: put pages you write on your own here (summaries, session logs, research, context for later).
-- brian/BRIAN.md, if it exists, holds ${me}'s instructions for you. Read it before doing anything else.
-- Every other folder brian/<name>/ is a brian shared with other people. Editors' changes reach every member. Read its BRIAN.md before working in it. Shared brians:
-${shared}
+Start by reading brian/BRIAN.md: it says how ${me} wants you to work, and you keep it up to date. Each shared brian has its own BRIAN.md, a guide to what's in it, which you also keep current.
 
-Rules:
-- Don't copy ${me}'s own notes into a shared brian unless asked: other members can read everything there.
-- Don't add links between brians (e.g. from brian/<name>/ to a page outside it). Other members can't follow them. Leave links that people wrote alone.
-- search only finds pages: read whole pages with read_page before acting on them. To overwrite a page, pass the etag from read_page.`;
+Always:
+- Outside brian/ are ${me}'s own notes. Edit them only when ${me} asks you to, or is working on that page with you.
+- brian/${me}/ is yours: write the pages you create on your own there.
+- Don't add links between brians.
+- search only finds pages: read whole pages with read_page before acting on them. To overwrite a page, pass the etag from read_page.
+
+Shared brians (editors' changes reach every member; viewers can read but not change them):
+${shared}`;
 }

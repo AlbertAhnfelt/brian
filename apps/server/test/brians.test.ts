@@ -239,8 +239,9 @@ describe('one Brian across brians', () => {
 		value(await account.addMember(ann.user.id, brian.id, bo.name, 'viewer'));
 		const text = await initialize(bo.token);
 		expect(text).toContain(`This is ${bo.name}'s Brian`);
-		expect(text).toContain(`brian/${bo.name}/ is yours to write in freely`);
-		expect(text).toContain('brian/acme/ — "acme", viewer (read-only), private');
+		expect(text).toContain(`brian/${bo.name}/ is yours`);
+		expect(text).toContain('Start by reading brian/BRIAN.md');
+		expect(text).toContain('brian/acme/ — "acme" (private). You are a viewer.');
 	});
 
 	it('exports shared brians under brian/<mount>/', async () => {
@@ -257,6 +258,36 @@ describe('one Brian across brians', () => {
 		const result = await tool(ann.token, 'list', { prefix: '' });
 		expect(result.isError).toBe(true);
 		expect(result.text).toMatch(/pick a username at .*\/welcome/);
+	});
+});
+
+describe('setting up', () => {
+	it('starts brian/BRIAN.md once, for the username, and never overwrites it', async () => {
+		const ann = await person('ann');
+		await account.setUp(ann.user.id);
+		const first = await tool(ann.token, 'read_page', { path: 'brian/BRIAN.md' });
+		expect(first.text).toContain(`# ${ann.name}'s Brian`);
+		expect(first.text).toContain(`brian/${ann.name}/`);
+
+		const etag = /etag: (\S+)/.exec(first.text)![1];
+		await tool(ann.token, 'write_page', { path: 'brian/BRIAN.md', content: 'edited by an agent', expected_etag: etag });
+		await account.setUp(ann.user.id);
+		expect((await tool(ann.token, 'read_page', { path: 'brian/BRIAN.md' })).text).toContain('edited by an agent');
+	});
+
+	it('does nothing before there is a username', async () => {
+		const { user } = await signedInUser('nobody-yet@example.com', null);
+		await account.setUp(user.id);
+		expect(await env.VAULT.getByName(user.id).list('')).toEqual({ folders: [], files: [] });
+	});
+
+	it('gives a shared brian a guide, not personal instructions', async () => {
+		const ann = await person('ann');
+		const brian = await brianOf(ann);
+		const md = (await tool(ann.token, 'read_page', { path: 'brian/acme/BRIAN.md' })).text;
+		expect(md).toContain(`---\nbrian: ${brian.id}\n---\n# acme`);
+		expect(md).toContain('## Map');
+		expect(md).not.toContain("'s Brian");
 	});
 });
 

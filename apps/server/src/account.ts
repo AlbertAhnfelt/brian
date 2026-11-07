@@ -48,6 +48,11 @@ export class Account extends WorkerEntrypoint<Env> implements AccountRpc {
 		await this.env.VAULT.getByName(userId).destroy();
 	}
 
+	/** After the username is chosen: writes the starting brian/BRIAN.md. */
+	setUp(userId: string): Promise<void> {
+		return members.setUp(this.env, userId);
+	}
+
 	brians(userId: string): Promise<BrianSummary[]> {
 		return members.membershipsOf(this.env.DB, userId);
 	}

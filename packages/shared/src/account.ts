@@ -23,6 +23,9 @@ export interface AccountRpc {
 	exportPages(userId: string): Promise<ExportedPage[]>;
 	deleteAccount(userId: string): Promise<void>;
 
+	/** Starts the user's Brian once they have a username (writes brian/BRIAN.md if missing). */
+	setUp(userId: string): Promise<void>;
+
 	// Shared brians. Every call acts as `userId` and checks that user's role itself.
 	brians(userId: string): Promise<BrianSummary[]>;
 	viewBrian(userId: string, brianId: string): Promise<BrianView | null>;

@@ -1,5 +1,5 @@
 import { error, redirect } from '@sveltejs/kit';
-import { createSession, linkLogin, loginAllowed, SESSION_COOKIE, SESSION_DAYS, signIn } from '@brian/shared';
+import { createSession, LIMITS, linkLogin, loginAllowed, SESSION_COOKIE, signIn } from '@brian/shared';
 import { env } from 'cloudflare:workers';
 import { findProvider, LOGIN_COOKIE } from '#lib/server/auth/index.ts';
 import type { RequestEvent, RequestHandler } from './$types';
@@ -56,7 +56,7 @@ async function finish({ params, url, cookies, request, locals }: RequestEvent): 
 		secure: true,
 		httpOnly: true,
 		sameSite: 'lax',
-		maxAge: SESSION_DAYS * 24 * 60 * 60
+		maxAge: LIMITS.sessionDays * 24 * 60 * 60
 	});
 	// `next` was checked with safeNext() when the login started, and lives in an HttpOnly cookie.
 	redirect(303, pending.next);

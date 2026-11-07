@@ -1,7 +1,4 @@
-export const MAX_PATH_LENGTH = 512;
-export const MAX_PAGE_BYTES = 1024 * 1024;
-/** Pages per vault. Also keeps exports, which are built in memory, a manageable size. */
-export const MAX_PAGES = 10_000;
+import { LIMITS } from '@brian/shared';
 
 export class VaultError extends Error {}
 
@@ -13,7 +10,7 @@ export function normalizePath(input: string): string {
 	const path = input.trim().replace(/^\/+/, '');
 	const segments = path.split('/');
 	if (!path || path.endsWith('/')) throw new VaultError(`"${input}" is not a page path.`);
-	if (path.length > MAX_PATH_LENGTH) throw new VaultError(`Paths can be at most ${MAX_PATH_LENGTH} characters.`);
+	if (path.length > LIMITS.pathLength) throw new VaultError(`Paths can be at most ${LIMITS.pathLength} characters.`);
 	if (segments.some((s) => s === '' || s === '.' || s === '..')) {
 		throw new VaultError(`"${input}" has an empty, "." or ".." segment.`);
 	}
@@ -39,11 +36,11 @@ export function normalizePrefix(input = ''): string {
 /** Throws if `content` (grown by `extraChars`, for edits not yet applied) is over the page limit. */
 export function checkSize(content: string, extraChars = 0): void {
 	// Cheap upper bound first (a UTF-16 unit is at most 3 UTF-8 bytes), so huge results are never built.
-	if (content.length + extraChars > MAX_PAGE_BYTES) {
-		throw new VaultError(`Pages can be at most ${MAX_PAGE_BYTES / 1024} KB.`);
+	if (content.length + extraChars > LIMITS.pageBytes) {
+		throw new VaultError(`Pages can be at most ${LIMITS.pageBytes / 1024} KB.`);
 	}
-	if (extraChars === 0 && new TextEncoder().encode(content).length > MAX_PAGE_BYTES) {
-		throw new VaultError(`Pages can be at most ${MAX_PAGE_BYTES / 1024} KB.`);
+	if (extraChars === 0 && new TextEncoder().encode(content).length > LIMITS.pageBytes) {
+		throw new VaultError(`Pages can be at most ${LIMITS.pageBytes / 1024} KB.`);
 	}
 }
 

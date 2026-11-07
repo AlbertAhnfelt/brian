@@ -1,8 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
-import { checkMarkdown, checkSize, ftsQuery, MAX_PAGES, normalizePath, normalizePrefix, VaultError } from './paths';
-
-/** How long deleted pages stay in the trash. */
-export const TRASH_DAYS = 30;
+import { LIMITS } from '@brian/shared';
+import { checkMarkdown, checkSize, ftsQuery, normalizePath, normalizePrefix, VaultError } from './paths';
 
 export interface Page {
 	path: string;
@@ -118,7 +116,7 @@ export class Vault extends DurableObject<Env> {
 				`SELECT path, snippet(pages_fts, 1, '**', '**', '…', 16) AS snippet, bm25(pages_fts, 5.0, 1.0) AS score
 				 FROM pages_fts WHERE pages_fts MATCH ? ORDER BY score LIMIT ?`,
 				match,
-				Math.min(Math.max(limit, 1), 50)
+				Math.min(Math.max(limit, 1), LIMITS.searchResults)
 			)
 			.toArray();
 	}
@@ -178,19 +176,19 @@ export class Vault extends DurableObject<Env> {
 		});
 	}
 
-	/** Soft delete: the page moves to the trash for TRASH_DAYS days. */
+	/** Soft delete: the page moves to the trash for LIMITS.trashDays days. */
 	delete(path: string): void {
 		this.ctx.storage.transactionSync(() => {
 			const page = this.read(path);
-			this.sql.exec(`DELETE FROM trash WHERE deleted_at < ?`, Date.now() - TRASH_DAYS * 24 * 60 * 60 * 1000);
+			this.sql.exec(`DELETE FROM trash WHERE deleted_at < ?`, Date.now() - LIMITS.trashDays * 24 * 60 * 60 * 1000);
 			this.sql.exec(`INSERT INTO trash (path, content, deleted_at) VALUES (?, ?, ?)`, page.path, page.content, Date.now());
 			this.remove(page.path);
 		});
 	}
 
 	/** Writes and deletes after `since` (0 for everything), oldest first, up to `limit` at a time. */
-	changes(since = 0, limit = 1000): Changes {
-		const take = Math.min(Math.max(limit, 1), 1000);
+	changes(since = 0, limit: number = LIMITS.changesPerCall): Changes {
+		const take = Math.min(Math.max(limit, 1), LIMITS.changesPerCall);
 		const rows = this.sql
 			.exec<{ seq: number; path: string; etag: string | null; deleted: number }>(
 				`SELECT seq, path, etag, 0 AS deleted FROM pages WHERE seq > ?1
@@ -245,8 +243,8 @@ export class Vault extends DurableObject<Env> {
 	private checkCanCreate(path: string): void {
 		checkMarkdown(path);
 		const count = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM pages`).one().n;
-		if (count >= MAX_PAGES) {
-			throw new VaultError(`This brian is full (${MAX_PAGES.toLocaleString('en-US')} pages). Delete some pages to make room.`);
+		if (count >= LIMITS.pagesPerBrian) {
+			throw new VaultError(`This brian is full (${LIMITS.pagesPerBrian.toLocaleString('en-US')} pages). Delete some pages to make room.`);
 		}
 	}
 

@@ -1,8 +1,10 @@
 import {
 	isValidName,
-	MAX_MEMBERSHIPS,
+	LIMITS,
 	NAME_RULES,
 	normalizeName,
+	personalBrianMd,
+	sharedBrianMd,
 	type BrianSummary,
 	type BrianView,
 	type Member,
@@ -77,7 +79,7 @@ async function pickMount(env: Bindings, userId: string, name: string): Promise<s
 	if (!username) return null;
 	const taken = new Set((await membershipsOf(env.DB, userId)).map((m) => m.mount));
 	const personal = env.VAULT.getByName(userId);
-	for (let n = 1; n <= 20; n++) {
+	for (let n = 1; n <= LIMITS.folderNameAttempts; n++) {
 		const suffix = n === 1 ? '' : `-${n}`;
 		const candidate = name.slice(0, 32 - suffix.length).replace(/-+$/, '') + suffix;
 		if (!isValidName(candidate) || candidate === username || taken.has(candidate)) continue;
@@ -90,12 +92,12 @@ async function pickMount(env: Bindings, userId: string, name: string): Promise<s
 
 async function roomForAnother(db: D1Database, userId: string): Promise<boolean> {
 	const count = await db.prepare('SELECT COUNT(*) AS n FROM members WHERE user_id = ?').bind(userId).first<number>('n');
-	return (count ?? 0) < MAX_MEMBERSHIPS;
+	return (count ?? 0) < LIMITS.sharedBriansPerUser;
 }
 
 /** Adds a membership with a free folder name. */
 async function insertMember(env: Bindings, brian: { id: string; name: string }, userId: string, role: Role): Promise<Outcome<string>> {
-	if (!(await roomForAnother(env.DB, userId))) return no(`A Brian can hold at most ${MAX_MEMBERSHIPS} shared brians.`);
+	if (!(await roomForAnother(env.DB, userId))) return no(`A Brian can hold at most ${LIMITS.sharedBriansPerUser} shared brians.`);
 	const mount = await pickMount(env, userId, brian.name);
 	if (!mount) return no('No free folder name for this brian. Choose a username first, or free up brian/ folders.');
 	try {
@@ -107,16 +109,6 @@ async function insertMember(env: Bindings, brian: { id: string; name: string }, 
 		throw error;
 	}
 	return ok(mount);
-}
-
-function brianMd(id: string, name: string): string {
-	return `---
-brian: ${id}
----
-# ${name}
-
-Instructions for agents working in this brian. Edit freely, but keep the \`brian:\` line above: it's how Brian recognises this folder.
-`;
 }
 
 export async function createBrian(env: Bindings, userId: string, input: string, visibility: Visibility): Promise<Outcome<BrianSummary>> {
@@ -131,7 +123,7 @@ export async function createBrian(env: Bindings, userId: string, input: string, 
 		await env.DB.prepare('DELETE FROM brians WHERE id = ?').bind(id).run();
 		return joined;
 	}
-	await env.VAULT.getByName(id).write('BRIAN.md', brianMd(id, name));
+	await env.VAULT.getByName(id).write('BRIAN.md', sharedBrianMd(id, name));
 	return ok({ id, name, visibility, role: 'owner', mount: joined.value });
 }
 
@@ -234,6 +226,21 @@ async function destroyBrian(env: Bindings, brianId: string): Promise<void> {
 		env.DB.prepare('DELETE FROM brians WHERE id = ?').bind(brianId)
 	]);
 	await env.VAULT.getByName(brianId).destroy();
+}
+
+/**
+ * Starts a new user's Brian once they have a username: writes brian/BRIAN.md unless it's
+ * already there (e.g. from the Obsidian plugin). Never overwrites.
+ */
+export async function setUp(env: Bindings, userId: string): Promise<void> {
+	const username = await usernameOf(env.DB, userId);
+	if (!username) return;
+	// A create-only write: it fails, harmlessly, if the page already exists.
+	await env.VAULT.getByName(userId)
+		.write('brian/BRIAN.md', personalBrianMd(username))
+		.catch((error: Error) => {
+			if (!/already exists/.test(error.message)) throw error;
+		});
 }
 
 /** For account deletion: erases the brians the user owns and leaves the rest. */
