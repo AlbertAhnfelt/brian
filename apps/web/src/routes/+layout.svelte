@@ -18,6 +18,7 @@
 	<nav>
 		<a href="/about" aria-current={page.url.pathname === '/about' ? 'page' : undefined}>about</a>
 		{#if data.user}
+			<a href="/brians" aria-current={page.url.pathname === '/brians' || page.url.pathname.startsWith('/b/') ? 'page' : undefined}>brians</a>
 			<a href="/account" aria-current={page.url.pathname === '/account' ? 'page' : undefined}>account</a>
 			<form method="post" action="/logout">
 				<button class="button ghost">log out</button>
