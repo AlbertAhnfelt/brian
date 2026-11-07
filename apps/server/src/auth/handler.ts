@@ -1,5 +1,5 @@
 import { AuthorizationError, CimdFetchError } from '@cloudflare/workers-oauth-provider';
-import { getSessionUser, readCookie, SESSION_COOKIE, type User } from '@brian/shared';
+import { getSessionUser, loginAllowed, readCookie, SESSION_COOKIE, type User } from '@brian/shared';
 import { SCOPE, type Props } from '../props';
 import { consentPage } from './consent';
 import { escape, page } from './html';
@@ -14,7 +14,8 @@ export const authHandler = {
 		if (pathname !== '/authorize') return new Response('Not found', { status: 404 });
 
 		try {
-			const user = await getSessionUser(env.DB, readCookie(request.headers.get('Cookie'), SESSION_COOKIE));
+			const session = await getSessionUser(env.DB, readCookie(request.headers.get('Cookie'), SESSION_COOKIE));
+			const user = session && loginAllowed(env, session.email) ? session : null;
 			if (request.method === 'GET') return user ? await showConsent(request, env, user) : toLogin(request, env);
 			if (request.method === 'POST' && user) return await submitConsent(request, env, user);
 			if (request.method === 'POST') return html(errorPage('Your session ended. Start connecting again from your app.'), 401);

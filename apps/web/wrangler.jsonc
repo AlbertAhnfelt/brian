@@ -14,6 +14,9 @@
 	"workers_dev": false,
 	"preview_urls": false,
 
+	// "true" limits sign-in to the ALLOWED_EMAILS secret (comma-separated). Only dev is restricted.
+	"vars": { "RESTRICT_LOGIN": "false" },
+
 	// Shared with apps/server, which owns the schema.
 	"d1_databases": [{ "binding": "DB", "database_name": "brian-local", "database_id": "local-brian-db" }],
 	// Account management RPC on apps/server (connected apps, export, deletion).
@@ -22,11 +25,13 @@
 	"env": {
 		"dev": {
 			// Everything on the host goes here, except the OAuth/MCP paths routed to brian-server-dev.
+			"vars": { "RESTRICT_LOGIN": "true" },
 			"routes": [{ "pattern": "dev.mybrian.dev/*", "zone_name": "mybrian.dev" }],
 			"d1_databases": [{ "binding": "DB", "database_name": "brian-dev", "database_id": "37a7eb4b-b045-4159-9ba9-593c9b2ea89e" }],
 			"services": [{ "binding": "SERVER", "service": "brian-server-dev", "entrypoint": "Account" }]
 		},
 		"prod": {
+			"vars": { "RESTRICT_LOGIN": "false" },
 			"routes": [{ "pattern": "mybrian.dev/*", "zone_name": "mybrian.dev" }],
 			"d1_databases": [{ "binding": "DB", "database_name": "brian-prod", "database_id": "REPLACE_WITH_PROD_D1_ID" }],
 			"services": [{ "binding": "SERVER", "service": "brian-server-prod", "entrypoint": "Account" }]

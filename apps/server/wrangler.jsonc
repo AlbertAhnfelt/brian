@@ -14,7 +14,8 @@
 	"preview_urls": false,
 
 	// Local: the website (Vite on :5173) proxies the OAuth/MCP paths here, so the public origin is :5173.
-	"vars": { "BASE_URL": "http://localhost:5173" },
+	// RESTRICT_LOGIN "true" limits sign-in to the ALLOWED_EMAILS secret (comma-separated). Only dev is restricted.
+	"vars": { "BASE_URL": "http://localhost:5173", "RESTRICT_LOGIN": "false" },
 	// One Vault per user (SQLite + full-text search). Migrations apply to every environment.
 	"durable_objects": { "bindings": [{ "name": "VAULT", "class_name": "Vault" }] },
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }],
@@ -25,7 +26,7 @@
 
 	"env": {
 		"dev": {
-			"vars": { "BASE_URL": "https://dev.mybrian.dev" },
+			"vars": { "BASE_URL": "https://dev.mybrian.dev", "RESTRICT_LOGIN": "true" },
 			"durable_objects": { "bindings": [{ "name": "VAULT", "class_name": "Vault" }] },
 			"routes": [
 				{ "pattern": "dev.mybrian.dev/mcp*", "zone_name": "mybrian.dev" },
@@ -39,7 +40,7 @@
 			]
 		},
 		"prod": {
-			"vars": { "BASE_URL": "https://mybrian.dev" },
+			"vars": { "BASE_URL": "https://mybrian.dev", "RESTRICT_LOGIN": "false" },
 			"durable_objects": { "bindings": [{ "name": "VAULT", "class_name": "Vault" }] },
 			"routes": [
 				{ "pattern": "mybrian.dev/mcp*", "zone_name": "mybrian.dev" },

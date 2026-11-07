@@ -1,5 +1,5 @@
 import { error, redirect } from '@sveltejs/kit';
-import { createSession, linkLogin, SESSION_COOKIE, SESSION_DAYS, signIn } from '@brian/shared';
+import { createSession, linkLogin, loginAllowed, SESSION_COOKIE, SESSION_DAYS, signIn } from '@brian/shared';
 import { env } from 'cloudflare:workers';
 import { findProvider, LOGIN_COOKIE } from '#lib/server/auth/index.ts';
 import type { RequestEvent, RequestHandler } from './$types';
@@ -33,6 +33,8 @@ async function finish({ params, url, cookies, request, locals }: RequestEvent): 
 
 	const redirectUri = `${url.origin}/login/${provider.id}/callback`;
 	const profile = await provider.profile(env, redirectUri, { code, verifier: pending.verifier, form });
+	// Checked before signIn(), so a turned-away login never creates a user. The email is verified.
+	if (!pending.link && !loginAllowed(env, profile.email)) error(403, 'This is a private test site.');
 
 	if (pending.link) {
 		// Trusted from the HttpOnly __Host- login cookie, which only this origin can set, and only

@@ -1,0 +1,2 @@
+# Dev only (with RESTRICT_LOGIN=true): comma-separated emails allowed to sign in.
+ALLOWED_EMAILS=
