@@ -246,7 +246,7 @@ export class Vault extends DurableObject<Env> {
 		checkMarkdown(path);
 		const count = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM pages`).one().n;
 		if (count >= MAX_PAGES) {
-			throw new VaultError(`Your Brian is full (${MAX_PAGES.toLocaleString('en-US')} pages). Delete some pages to make room.`);
+			throw new VaultError(`This brian is full (${MAX_PAGES.toLocaleString('en-US')} pages). Delete some pages to make room.`);
 		}
 	}
 

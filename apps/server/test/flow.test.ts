@@ -84,11 +84,11 @@ describe('MCP', () => {
 		const alice = await connect((await signedInUser('alice@example.com')).jar);
 		const bob = await connect((await signedInUser('bob@example.com')).jar);
 
-		expect((await tool(alice, 'whoami')).text).toBe('alice@example.com');
+		expect((await tool(alice, 'whoami')).text).toContain('<alice@example.com>');
 		expect((await tool(alice, 'write_page', { path: 'notes/a.md', content: 'alice secret' })).isError).toBe(false);
 		expect((await tool(alice, 'read_page', { path: 'notes/a.md' })).text).toContain('alice secret');
 
-		expect((await tool(bob, 'whoami')).text).toBe('bob@example.com');
+		expect((await tool(bob, 'whoami')).text).toContain('<bob@example.com>');
 		expect((await tool(bob, 'read_page', { path: 'notes/a.md' })).isError).toBe(true);
 		expect((await tool(bob, 'search', { query: 'secret' })).text).toBe('No matches.');
 	});

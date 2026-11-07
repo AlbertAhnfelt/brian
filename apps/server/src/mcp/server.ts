@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { getMcpAuthContext } from 'agents/mcp/server';
 import { env } from 'cloudflare:workers';
 import { z } from 'zod';
+import { Brian, instructions } from '../brian/router';
 import type { Props } from '../props';
 
 type Result = { content: { type: 'text'; text: string }[]; isError?: boolean };
@@ -17,25 +18,32 @@ async function run(fn: () => Promise<string>): Promise<Result> {
 	}
 }
 
-export function createServer(): McpServer {
-	const server = new McpServer({ name: 'brian', version: '0.0.1' });
+/**
+ * Built for every MCP request, for the user the access token belongs to. Their memberships are
+ * loaded fresh each time, so a removed member loses access with their next call.
+ */
+export async function createServer(): Promise<McpServer> {
 	const props = getMcpAuthContext()?.props as Props | undefined;
-	if (!props) return server;
+	if (!props) return new McpServer({ name: 'brian', version: '0.0.1' });
 
-	// The signed-in user's own vault. Durable Objects are named by user ID.
-	const vault = env.VAULT.getByName(props.userId);
+	const vault = await Brian.load(env, props.userId);
+	const server = new McpServer({ name: 'brian', version: '0.0.1' }, { instructions: instructions(vault) });
 
 	server.registerTool(
 		'whoami',
-		{ description: 'Return the email of the person whose Brian this is.' },
-		async () => text(props.email)
+		{ description: 'Who this Brian belongs to, and the shared brians in it with your role in each.' },
+		async () => {
+			const lines = [`${vault.username ?? '(no username yet)'} <${props.email}>`];
+			for (const b of vault.brians) lines.push(`brian/${b.mount}/ — "${b.name}", ${b.role}, ${b.visibility}`);
+			return text(lines.join('\n'));
+		}
 	);
 
 	server.registerTool(
 		'list',
 		{
 			description:
-				'List the vault like `ls`: folders and files directly under a prefix. Use "" for the root, "notes/" for a folder.',
+				'List the Brian like `ls`: folders and files directly under a prefix. Use "" for the root, "notes/" for a folder. Shared brians are the folders in brian/.',
 			inputSchema: z.object({ prefix: z.string().default('') })
 		},
 		({ prefix }) =>
@@ -50,7 +58,7 @@ export function createServer(): McpServer {
 		'search',
 		{
 			description:
-				'Full-text search over page paths and contents, best matches first. Every word must match; end a word with * for prefix matching. Returns paths with snippets: read_page the ones you need before acting on them.',
+				'Full-text search over page paths and contents in every brian, best matches first. Every word must match; end a word with * for prefix matching. Returns paths with snippets: read_page the ones you need before acting on them.',
 			inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().min(1).max(50).default(20) })
 		},
 		({ query, limit }) =>
@@ -77,7 +85,7 @@ export function createServer(): McpServer {
 		'write_page',
 		{
 			description:
-				'Create a page, or fully overwrite one. Pages are markdown: paths must end in .md, and a Brian holds up to 10,000 pages. To create: omit expected_etag (fails if the page exists). To overwrite: pass the etag from read_page (fails if the page changed since; re-read and retry). For small changes prefer edit_page.',
+				'Create a page, or fully overwrite one. Pages are markdown: paths must end in .md, and each brian holds up to 10,000 pages. Shared brians you view are read-only. To create: omit expected_etag (fails if the page exists). To overwrite: pass the etag from read_page (fails if the page changed since; re-read and retry). For small changes prefer edit_page.',
 			inputSchema: z.object({ path: z.string().min(1), content: z.string(), expected_etag: z.string().optional() })
 		},
 		({ path, content, expected_etag }) =>
@@ -109,7 +117,7 @@ export function createServer(): McpServer {
 	server.registerTool(
 		'move_page',
 		{
-			description: 'Move or rename a page. The new path must end in .md. Fails if the destination already exists.',
+			description: 'Move or rename a page, also between brians. The new path must end in .md. Fails if the destination already exists.',
 			inputSchema: z.object({ from: z.string().min(1), to: z.string().min(1) })
 		},
 		({ from, to }) =>
