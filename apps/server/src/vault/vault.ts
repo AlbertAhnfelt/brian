@@ -19,11 +19,29 @@ export interface Listing {
 export type SearchHit = {
 	path: string;
 	snippet: string;
+	/** BM25 rank: lower is better. Comparable enough across vaults to merge results. */
+	score: number;
 };
 
+/** One entry in the change feed: a page that was written, or a path that was deleted. */
+export type Change = { seq: number; path: string } & ({ deleted: false; etag: string } | { deleted: true });
+
+export interface Changes {
+	changes: Change[];
+	/** Pass back as `since` to continue. */
+	cursor: number;
+	/** True if there may be more changes after `cursor`. */
+	more: boolean;
+}
+
 /**
- * One person's vault. Each user gets their own Durable Object (named by user ID) with its own
- * SQLite database, so one user's requests can never reach another's pages.
+ * One brian's pages. A user's personal brian is the Durable Object named by their user ID; a
+ * shared brian is the one named by its brian ID ("b_…"). Each has its own SQLite database, so a
+ * request routed to one brian can never reach another's pages. Shared brians store paths
+ * relative to their own folder, so each member can mount them under any name.
+ *
+ * Every write takes the next number from a per-vault counter (`seq`), and deletes leave a
+ * record, so a sync client can ask for everything that changed since the last number it saw.
  *
  * Every method runs synchronous SQL with no awaits in between, so each call is atomic.
  */
@@ -41,8 +59,15 @@ export class Vault extends DurableObject<Env> {
 				path TEXT PRIMARY KEY,
 				content TEXT NOT NULL,
 				etag TEXT NOT NULL,
-				updated_at INTEGER NOT NULL
+				updated_at INTEGER NOT NULL,
+				seq INTEGER NOT NULL DEFAULT 0
 			);
+			CREATE TABLE IF NOT EXISTS deleted (
+				path TEXT PRIMARY KEY,
+				seq INTEGER NOT NULL,
+				deleted_at INTEGER NOT NULL
+			);
+			CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 			CREATE TABLE IF NOT EXISTS trash (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				path TEXT NOT NULL,
@@ -50,6 +75,19 @@ export class Vault extends DurableObject<Env> {
 				deleted_at INTEGER NOT NULL
 			);
 			CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(path, content, tokenize = 'porter unicode61');
+		`);
+		// Vaults created before the change feed: add seq and number the existing pages.
+		const hasSeq = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM pragma_table_info('pages') WHERE name = 'seq'`).one().n;
+		if (!hasSeq) {
+			this.ctx.storage.transactionSync(() => {
+				this.sql.exec(`ALTER TABLE pages ADD COLUMN seq INTEGER NOT NULL DEFAULT 0`);
+				this.sql.exec(`UPDATE pages SET seq = rowid`);
+				this.sql.exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('seq', (SELECT COALESCE(MAX(seq), 0) FROM pages))`);
+			});
+		}
+		this.sql.exec(`
+			CREATE INDEX IF NOT EXISTS pages_seq ON pages (seq);
+			CREATE INDEX IF NOT EXISTS deleted_seq ON deleted (seq);
 		`);
 	}
 
@@ -77,8 +115,8 @@ export class Vault extends DurableObject<Env> {
 		if (!match) return [];
 		return this.sql
 			.exec<SearchHit>(
-				`SELECT path, snippet(pages_fts, 1, '**', '**', '…', 16) AS snippet
-				 FROM pages_fts WHERE pages_fts MATCH ? ORDER BY bm25(pages_fts, 5.0, 1.0) LIMIT ?`,
+				`SELECT path, snippet(pages_fts, 1, '**', '**', '…', 16) AS snippet, bm25(pages_fts, 5.0, 1.0) AS score
+				 FROM pages_fts WHERE pages_fts MATCH ? ORDER BY score LIMIT ?`,
 				match,
 				Math.min(Math.max(limit, 1), 50)
 			)
@@ -150,6 +188,24 @@ export class Vault extends DurableObject<Env> {
 		});
 	}
 
+	/** Writes and deletes after `since` (0 for everything), oldest first, up to `limit` at a time. */
+	changes(since = 0, limit = 1000): Changes {
+		const take = Math.min(Math.max(limit, 1), 1000);
+		const rows = this.sql
+			.exec<{ seq: number; path: string; etag: string | null; deleted: number }>(
+				`SELECT seq, path, etag, 0 AS deleted FROM pages WHERE seq > ?1
+				 UNION ALL SELECT seq, path, NULL, 1 FROM deleted WHERE seq > ?1
+				 ORDER BY seq LIMIT ?2`,
+				since,
+				take
+			)
+			.toArray();
+		const changes: Change[] = rows.map((row) =>
+			row.deleted ? { seq: row.seq, path: row.path, deleted: true } : { seq: row.seq, path: row.path, deleted: false, etag: row.etag! }
+		);
+		return { changes, cursor: rows.at(-1)?.seq ?? since, more: rows.length === take };
+	}
+
 	/** Every page, plus the trash under `.trash/<deleted at>/<path>`, for export. */
 	exportAll(): Page[] {
 		const trash = this.sql
@@ -174,9 +230,11 @@ export class Vault extends DurableObject<Env> {
 	async destroy(): Promise<void> {
 		// Clear the rows synchronously so the erase is visible at once, then drop the database.
 		this.ctx.storage.transactionSync(() => {
-				this.sql.exec(`DELETE FROM pages`);
-				this.sql.exec(`DELETE FROM pages_fts`);
-				this.sql.exec(`DELETE FROM trash`);
+			this.sql.exec(`DELETE FROM pages`);
+			this.sql.exec(`DELETE FROM pages_fts`);
+			this.sql.exec(`DELETE FROM trash`);
+			this.sql.exec(`DELETE FROM deleted`);
+			this.sql.exec(`DELETE FROM meta`);
 		});
 		await this.ctx.storage.deleteAll();
 		// This instance may keep serving until it is evicted, so leave it a valid, empty database.
@@ -203,16 +261,28 @@ export class Vault extends DurableObject<Env> {
 		return row ? { path: row.path, content: row.content, etag: row.etag, updatedAt: row.updated_at } : null;
 	}
 
+	/** The next change number. Never reused, even after the page that had it is gone. */
+	private nextSeq(): number {
+		return this.sql
+			.exec<{ value: number }>(
+				`INSERT INTO meta (key, value) VALUES ('seq', 1) ON CONFLICT (key) DO UPDATE SET value = value + 1 RETURNING value`
+			)
+			.one().value;
+	}
+
 	private put(path: string, content: string): Page {
 		const page = { path, content, etag: crypto.randomUUID(), updatedAt: Date.now() };
 		this.sql.exec(
-			`INSERT INTO pages (path, content, etag, updated_at) VALUES (?, ?, ?, ?)
-			 ON CONFLICT (path) DO UPDATE SET content = excluded.content, etag = excluded.etag, updated_at = excluded.updated_at`,
+			`INSERT INTO pages (path, content, etag, updated_at, seq) VALUES (?, ?, ?, ?, ?)
+			 ON CONFLICT (path) DO UPDATE SET content = excluded.content, etag = excluded.etag,
+			   updated_at = excluded.updated_at, seq = excluded.seq`,
 			page.path,
 			page.content,
 			page.etag,
-			page.updatedAt
+			page.updatedAt,
+			this.nextSeq()
 		);
+		this.sql.exec(`DELETE FROM deleted WHERE path = ?`, path);
 		this.sql.exec(`DELETE FROM pages_fts WHERE path = ?`, path);
 		this.sql.exec(`INSERT INTO pages_fts (path, content) VALUES (?, ?)`, path, content);
 		return page;
@@ -221,5 +291,12 @@ export class Vault extends DurableObject<Env> {
 	private remove(path: string): void {
 		this.sql.exec(`DELETE FROM pages WHERE path = ?`, path);
 		this.sql.exec(`DELETE FROM pages_fts WHERE path = ?`, path);
+		this.sql.exec(
+			`INSERT INTO deleted (path, seq, deleted_at) VALUES (?, ?, ?)
+			 ON CONFLICT (path) DO UPDATE SET seq = excluded.seq, deleted_at = excluded.deleted_at`,
+			path,
+			this.nextSeq(),
+			Date.now()
+		);
 	}
 }

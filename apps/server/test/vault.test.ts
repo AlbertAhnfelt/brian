@@ -175,3 +175,70 @@ describe('Vault hardening', () => {
 		await v.write('b.md', 'two');
 	});
 });
+
+describe('change feed', () => {
+	it('numbers every write and delete, oldest first', async () => {
+		const v = vault();
+		const a = await v.write('a.md', 'one');
+		await v.write('b.md', 'two');
+		await v.edit('a.md', 'one', 'uno');
+		await v.move('b.md', 'c.md');
+		await v.delete('a.md');
+		const { changes, cursor, more } = await v.changes(0);
+		expect(changes.map((c) => [c.path, c.deleted])).toEqual([
+			['b.md', true],
+			['c.md', false],
+			['a.md', true]
+		]);
+		expect(changes.map((c) => c.seq)).toEqual([4, 5, 6]);
+		expect(cursor).toBe(6);
+		expect(more).toBe(false);
+		expect(a.etag).not.toBe((changes[1] as { etag: string }).etag);
+	});
+
+	it('continues from a cursor, a page at a time', async () => {
+		const v = vault();
+		for (const name of ['a', 'b', 'c']) await v.write(`${name}.md`, name);
+		const first = await v.changes(0, 2);
+		expect(first.changes.map((c) => c.path)).toEqual(['a.md', 'b.md']);
+		expect(first.more).toBe(true);
+		const rest = await v.changes(first.cursor, 2);
+		expect(rest.changes.map((c) => c.path)).toEqual(['c.md']);
+		expect(rest.more).toBe(false);
+		expect((await v.changes(rest.cursor)).changes).toEqual([]);
+	});
+
+	it('forgets the delete when a path is written again', async () => {
+		const v = vault();
+		await v.write('a.md', 'one');
+		await v.delete('a.md');
+		await v.write('a.md', 'again');
+		expect((await v.changes(0)).changes).toMatchObject([{ path: 'a.md', deleted: false, seq: 3 }]);
+	});
+
+	it('numbers the pages of a vault created before the feed existed', async () => {
+		const v = vault();
+		await v.write('a.md', 'one');
+		await v.write('b.md', 'two');
+		await runInDurableObject(v, (instance, state) => {
+			const sql = state.storage.sql;
+			sql.exec(`DROP INDEX pages_seq`);
+			sql.exec(`ALTER TABLE pages DROP COLUMN seq`);
+			sql.exec(`DELETE FROM meta`);
+			(instance as unknown as { migrate(): void }).migrate();
+		});
+		const { changes, cursor } = await v.changes(0);
+		expect(changes.map((c) => c.path)).toEqual(['a.md', 'b.md']);
+		await v.write('c.md', 'three');
+		expect((await v.changes(cursor)).changes).toMatchObject([{ path: 'c.md', seq: cursor + 1 }]);
+	});
+
+	it('scores search hits so results from several brians can be merged', async () => {
+		const v = vault();
+		await v.write('apples.md', 'apples apples apples');
+		await v.write('other.md', 'one apples mention among many other words here');
+		const hits = await v.search('apples');
+		expect(hits.map((h) => h.path)).toEqual(['apples.md', 'other.md']);
+		expect(hits[0].score).toBeLessThan(hits[1].score);
+	});
+});
