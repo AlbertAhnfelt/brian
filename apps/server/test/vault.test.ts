@@ -135,4 +135,43 @@ describe('Vault hardening', () => {
 		await v.delete('new.md');
 		expect((await v.exportAll()).map((p) => p.path)).toEqual([expect.stringMatching(/\/new\.md$/)]);
 	});
+
+	it.each(['notes/a.txt', 'image.png', 'notes/.md', 'md', 'a.md.txt'])('refuses to create non-markdown page %j', async (path) => {
+		expect(await failure(vault().write(path, 'x'))).toMatch(/must end in \.md/);
+	});
+
+	it('accepts .md in any case, and refuses to move a page to a non-markdown path', async () => {
+		const v = vault();
+		await v.write('Upper.MD', 'x');
+		expect(await failure(v.move('Upper.MD', 'upper.txt'))).toMatch(/must end in \.md/);
+		await v.move('Upper.MD', 'lower.md');
+		expect((await v.read('lower.md')).content).toBe('x');
+	});
+
+	it('still reads, edits and deletes older non-markdown pages', async () => {
+		const v = vault();
+		await runInDurableObject(v, (_, state) => {
+			state.storage.sql.exec(`INSERT INTO pages (path, content, etag, updated_at) VALUES ('old.txt', 'hi', 'e1', 0)`);
+		});
+		await v.write('old.txt', 'hello', 'e1');
+		await v.edit('old.txt', 'hello', 'hey');
+		expect((await v.read('old.txt')).content).toBe('hey');
+		await v.delete('old.txt');
+	});
+
+	it('refuses new pages past the page limit, but still allows overwrites', async () => {
+		const v = vault();
+		const first = await v.write('a.md', 'one');
+		await runInDurableObject(v, (_, state) => {
+			state.storage.sql.exec(
+				`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 9999)
+				 INSERT INTO pages (path, content, etag, updated_at) SELECT 'p' || i || '.md', '', 'e', 0 FROM n`
+			);
+		});
+		expect(await failure(v.write('b.md', 'two'))).toMatch(/full \(10,000 pages\)/);
+		await v.write('a.md', 'changed', first.etag);
+		await v.move('a.md', 'c.md');
+		await v.delete('c.md');
+		await v.write('b.md', 'two');
+	});
 });

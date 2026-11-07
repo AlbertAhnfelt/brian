@@ -1,5 +1,7 @@
 export const MAX_PATH_LENGTH = 512;
 export const MAX_PAGE_BYTES = 1024 * 1024;
+/** Pages per vault. Also keeps exports, which are built in memory, a manageable size. */
+export const MAX_PAGES = 10_000;
 
 export class VaultError extends Error {}
 
@@ -21,6 +23,11 @@ export function normalizePath(input: string): string {
 		throw new VaultError('Paths cannot contain \\, :, slash look-alikes or invisible formatting characters.');
 	}
 	return path;
+}
+
+/** Throws unless `path` names a markdown page. Brian stores and syncs .md files only. */
+export function checkMarkdown(path: string): void {
+	if (!/[^/]\.md$/i.test(path)) throw new VaultError(`"${path}" is not a markdown page. Page paths must end in .md.`);
 }
 
 /** Normalizes a folder prefix for list(): "" for the root, otherwise ending in "/". */

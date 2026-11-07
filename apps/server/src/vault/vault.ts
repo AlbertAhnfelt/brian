@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { checkSize, ftsQuery, normalizePath, normalizePrefix, VaultError } from './paths';
+import { checkMarkdown, checkSize, ftsQuery, MAX_PAGES, normalizePath, normalizePrefix, VaultError } from './paths';
 
 /** How long deleted pages stay in the trash. */
 export const TRASH_DAYS = 30;
@@ -107,6 +107,7 @@ export class Vault extends DurableObject<Env> {
 			if (expectedEtag !== undefined && existing && existing.etag !== expectedEtag) {
 				throw new VaultError(`"${key}" changed since you read it. Read it again and retry.`);
 			}
+			if (!existing) this.checkCanCreate(key);
 			return this.put(key, content);
 		});
 	}
@@ -132,6 +133,7 @@ export class Vault extends DurableObject<Env> {
 		return this.ctx.storage.transactionSync(() => {
 			const page = this.read(from);
 			const target = normalizePath(to);
+			checkMarkdown(target);
 			if (this.find(target)) throw new VaultError(`"${target}" already exists.`);
 			this.remove(page.path);
 			return this.put(target, page.content);
@@ -179,6 +181,15 @@ export class Vault extends DurableObject<Env> {
 		await this.ctx.storage.deleteAll();
 		// This instance may keep serving until it is evicted, so leave it a valid, empty database.
 		this.migrate();
+	}
+
+	/** New pages must be markdown, and the vault must have room. */
+	private checkCanCreate(path: string): void {
+		checkMarkdown(path);
+		const count = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM pages`).one().n;
+		if (count >= MAX_PAGES) {
+			throw new VaultError(`Your Brian is full (${MAX_PAGES.toLocaleString('en-US')} pages). Delete some pages to make room.`);
+		}
 	}
 
 	private find(path: string): Page | null {

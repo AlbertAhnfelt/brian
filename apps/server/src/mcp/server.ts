@@ -77,7 +77,7 @@ export function createServer(): McpServer {
 		'write_page',
 		{
 			description:
-				'Create a page, or fully overwrite one. To create: omit expected_etag (fails if the page exists). To overwrite: pass the etag from read_page (fails if the page changed since; re-read and retry). For small changes prefer edit_page.',
+				'Create a page, or fully overwrite one. Pages are markdown: paths must end in .md, and a Brian holds up to 10,000 pages. To create: omit expected_etag (fails if the page exists). To overwrite: pass the etag from read_page (fails if the page changed since; re-read and retry). For small changes prefer edit_page.',
 			inputSchema: z.object({ path: z.string().min(1), content: z.string(), expected_etag: z.string().optional() })
 		},
 		({ path, content, expected_etag }) =>
@@ -109,7 +109,7 @@ export function createServer(): McpServer {
 	server.registerTool(
 		'move_page',
 		{
-			description: 'Move or rename a page. Fails if the destination already exists.',
+			description: 'Move or rename a page. The new path must end in .md. Fails if the destination already exists.',
 			inputSchema: z.object({ from: z.string().min(1), to: z.string().min(1) })
 		},
 		({ from, to }) =>
