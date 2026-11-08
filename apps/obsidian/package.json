@@ -1,0 +1,21 @@
+{
+	"name": "@brian/obsidian",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"scripts": {
+		"build": "node esbuild.config.mjs production",
+		"dev": "node esbuild.config.mjs",
+		"check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@brian/shared": "workspace:*",
+		"@brian/sync": "workspace:*",
+		"yjs": "13.6.33"
+	},
+	"devDependencies": {
+		"esbuild": "0.28.2",
+		"obsidian": "1.14.4",
+		"typescript": "6.0.3"
+	}
+}

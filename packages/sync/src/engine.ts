@@ -208,6 +208,33 @@ export class BrianSync {
 		});
 	}
 
+	/** A folder was renamed: every page in it moves (Obsidian may also report each file; that's harmless). */
+	folderRenamed(from: string, to: string): Promise<void> {
+		return this.exclusive(async () => {
+			if (this.options.readOnly) return;
+			const prefix = foldPath(`${from.replace(/\/+$/, '')}/`);
+			const target = `${to.replace(/\/+$/, '')}/`;
+			for (const page of [...this.pages.values()]) {
+				if (!foldPath(page.path).startsWith(prefix)) continue;
+				this.repath(page, target + page.path.slice(prefix.length));
+				page.moved = true;
+				this.pending.add(page.id);
+				await this.save(page);
+			}
+			this.flushSoon();
+		});
+	}
+
+	/** A folder was deleted: every page in it is deleted. */
+	folderDeleted(path: string): Promise<void> {
+		return this.exclusive(async () => {
+			if (this.options.readOnly) return;
+			const prefix = foldPath(`${path.replace(/\/+$/, '')}/`);
+			for (const page of [...this.pages.values()]) if (foldPath(page.path).startsWith(prefix)) await this.forget(page, true);
+			this.flushSoon();
+		});
+	}
+
 	/** Typing in a file has been saved: remote changes held back for it can be written now. */
 	fileIdle(): Promise<void> {
 		return this.exclusive(() => this.writeHeld());

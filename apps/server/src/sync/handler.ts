@@ -9,18 +9,21 @@ const BRIAN_NAME = /^(b_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
  * POST /mcp/sync, behind the OAuth token like MCP itself: one sync ticket per brian the user is in,
  * issued by that brian's Durable Object with the role the user has there right now.
  */
-export async function syncSession(env: Env, props: Props): Promise<Response> {
+export async function syncSession(request: Request, env: Env, props: Props): Promise<Response> {
+	// ?brian=<id> (or "personal") asks for one ticket, for reconnecting a single brian.
+	const only = new URL(request.url).searchParams.get('brian');
 	const brian = await Brian.load(env, props.userId, props.client || 'Obsidian');
 	if (!brian.username) return Response.json({ error: 'Pick a username first.' }, { status: 409 });
+	const wanted = (id: string | null) => only === null || only === (id ?? 'personal');
 	const brians: SyncBrian[] = await Promise.all([
-		(async () => ({
+		...(wanted(null) ? [null] : []).map(async () => ({
 			id: null,
 			name: brian.username!,
 			mount: null,
 			role: 'owner' as const,
 			ticket: `${props.userId}.${await env.VAULT.getByName(props.userId).issueTicket(props.userId, props.email, props.client || 'Obsidian', 'owner')}`
-		}))(),
-		...brian.brians.map(async (b) => ({
+		})),
+		...brian.brians.filter((b) => wanted(b.id)).map(async (b) => ({
 			id: b.id,
 			name: b.name,
 			mount: b.mount,

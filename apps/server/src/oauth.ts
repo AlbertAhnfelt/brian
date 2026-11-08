@@ -18,6 +18,9 @@ export const oauthOptions: OAuthProviderOptions<Env> = {
 	tokenEndpoint: '/oauth/token',
 	clientRegistrationEndpoint: '/oauth/register',
 	clientIdMetadataDocumentEnabled: true,
+	// The Obsidian plugin signs in with an obsidian:// redirect. PKCE keeps the code useless to any
+	// other app that claims the scheme.
+	allowPrivateUseRedirectUris: true,
 	scopesSupported: [SCOPE],
 	requiredScopes: [SCOPE],
 	resourceMetadata: {

@@ -210,6 +210,27 @@ describe('the sync engine, with devices against the real server', () => {
 		expect((await tool(token, 'list', { prefix: '' })).text).toMatch(/Nothing here yet|brian\//);
 	});
 
+	it('syncs folder renames and folder deletes', async () => {
+		const token = await user('ann');
+		const [a, b] = [new Device(token), new Device(token)];
+		await a.start();
+		await b.start();
+		await a.save('proj/one.md', '1');
+		await a.save('proj/deep/two.md', '2');
+		await quiet(a, b);
+		for (const [from, to] of [['proj/one.md', 'work/one.md'], ['proj/deep/two.md', 'work/deep/two.md']]) {
+			a.files.files.set(to, a.files.files.get(from)!);
+			a.files.files.delete(from);
+		}
+		await a.engine!.folderRenamed('proj', 'work');
+		await quiet(a, b);
+		expect([...b.files.files.keys()].sort()).toEqual(['work/deep/two.md', 'work/one.md']);
+		a.files.files.clear();
+		await a.engine!.folderDeleted('work/');
+		await quiet(a, b);
+		expect(b.files.files.size).toBe(0);
+	});
+
 	it('keeps a page one device deleted while another edited it', async () => {
 		const token = await user('ann');
 		const [a, b] = [new Device(token), new Device(token)];

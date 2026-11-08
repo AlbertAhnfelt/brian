@@ -14,7 +14,7 @@ export const mcpHandler = {
 		// Tokens issued before an email left the allowlist stop working too.
 		if (!loginAllowed(env, ctx.props.email)) return new Response('Forbidden', { status: 403 });
 		if (new URL(request.url).pathname === '/mcp/sync') {
-			return request.method === 'POST' ? syncSession(env, ctx.props) : new Response('Method not allowed', { status: 405 });
+			return request.method === 'POST' ? syncSession(request, env, ctx.props) : new Response('Method not allowed', { status: 405 });
 		}
 		return handler(request, env, ctx);
 	}

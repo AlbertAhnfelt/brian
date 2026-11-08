@@ -3,7 +3,7 @@ import { decodeFrame, encodeFrame, setText, TEXT, type SyncSession } from '@bria
 import { exports } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { call, connect, signedInUser, tool } from './helpers';
+import { call, connect, ORIGIN, signedInUser, tool } from './helpers';
 
 const account = exports.Account;
 let seq = 0;
@@ -116,6 +116,44 @@ describe('sync tickets', () => {
 			[shared.id, 'acme', 'owner']
 		]);
 		expect(s.brians[0].ticket.startsWith(`${ann.user.id}.`)).toBe(true);
+	});
+
+	it('can be asked for one brian at a time', async () => {
+		const ann = await person('ann');
+		const shared = value(await account.createBrian(ann.user.id, 'acme', 'private')) as BrianSummary;
+		const one = async (brian: string) =>
+			((await (await call(`/mcp/sync?brian=${brian}`, { method: 'POST', headers: { Authorization: `Bearer ${ann.token}` } })).json()) as SyncSession).brians;
+		expect((await one('personal')).map((b) => b.id)).toEqual([null]);
+		expect((await one(shared.id)).map((b) => b.id)).toEqual([shared.id]);
+		expect(await one('b_00000000-0000-0000-0000-000000000000')).toEqual([]);
+	});
+
+	it('lets the Obsidian plugin sign in with an obsidian:// redirect', async () => {
+		const redirect = 'obsidian://brian-auth';
+		const registered = await call('/oauth/register', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ client_name: 'Obsidian', redirect_uris: [redirect], token_endpoint_auth_method: 'none' })
+		});
+		expect(registered.status).toBe(201);
+		const { client_id } = (await registered.json()) as { client_id: string };
+		const { jar } = await signedInUser(`obs-${crypto.randomUUID().slice(0, 6)}@example.com`);
+		const url = new URL('/authorize', 'http://x');
+		url.search = new URLSearchParams({
+			response_type: 'code',
+			client_id,
+			redirect_uri: redirect,
+			scope: 'brian',
+			state: 's',
+			code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+			code_challenge_method: 'S256',
+			resource: `${ORIGIN}/mcp`
+		}).toString();
+		const consent = await jar.fetch(url.pathname + url.search);
+		expect(consent.status).toBe(200);
+		const handle = /name="handle" value="([^"]+)"/.exec(await consent.text())![1];
+		const approved = await jar.fetch('/authorize', { method: 'POST', body: new URLSearchParams({ handle, decision: 'approve' }) });
+		expect(approved.headers.get('Location')).toMatch(/^obsidian:\/\/brian-auth\?code=/);
 	});
 
 	it('open one socket each, once, and nothing else does', async () => {
