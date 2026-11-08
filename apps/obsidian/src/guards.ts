@@ -2,7 +2,7 @@ import { FileSystemAdapter, type App } from 'obsidian';
 
 /** Obsidian internals the guards peek at. Not public API, so every access is defensive. */
 interface Internals {
-	internalPlugins?: { getEnabledPluginById?(id: string): unknown; plugins?: Record<string, { enabled?: boolean }> };
+	internalPlugins?: { getEnabledPluginById?(id: string): { getRemoteVaultId?(): string | null } | null };
 	plugins?: { enabledPlugins?: Set<string> };
 }
 
@@ -18,9 +18,10 @@ const SYNC_PLUGINS: Record<string, string> = {
  */
 export function otherSyncTool(app: App): string | null {
 	const internals = app as unknown as Internals;
-	const core = internals.internalPlugins;
-	if (core?.getEnabledPluginById?.('sync') || core?.plugins?.sync?.enabled) {
-		return 'Obsidian Sync is on. Brian has to be the only thing syncing this vault: turn Obsidian Sync off (Settings → Core plugins → Sync).';
+	// Obsidian enables its Sync plugin in every new vault, subscription or not. It only syncs once
+	// the vault is connected to a remote vault, which is the same test Obsidian itself uses.
+	if (internals.internalPlugins?.getEnabledPluginById?.('sync')?.getRemoteVaultId?.()) {
+		return 'Obsidian Sync is syncing this vault. Brian has to be the only thing syncing it: disconnect Obsidian Sync (Settings → Sync).';
 	}
 	for (const [id, name] of Object.entries(SYNC_PLUGINS)) {
 		if (internals.plugins?.enabledPlugins?.has(id)) {

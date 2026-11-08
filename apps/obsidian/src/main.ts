@@ -155,7 +155,11 @@ export default class BrianPlugin extends Plugin {
 		try {
 			this.problem = this.settings.tokens ? otherSyncTool(this.app) : 'Sign in to start syncing.';
 			if (!this.problem && !this.settings.installed) this.problem = cannotInstall(this.app, LIMITS.pagesPerBrian);
-			if (this.problem) return;
+			if (this.problem) {
+				// Say why out loud: a sync that silently doesn't run looks like a broken one.
+				if (this.settings.tokens) new Notice(`Brian isn't syncing. ${this.problem}`, 15_000);
+				return;
+			}
 			let session: SyncSession;
 			try {
 				session = await this.session();
