@@ -11,16 +11,21 @@ apps/
     src/auth/   /authorize consent page (reuses the website session)
     src/mcp/    MCP server and tools
     src/brian/  brians: membership (members.ts) and path routing for MCP (router.ts)
-    src/vault/  Vault Durable Object: one brian's pages (SQLite + full-text search + change feed)
+    src/vault/  Vault Durable Object: one brian's pages (SQLite + full-text search + change feed,
+                a Yjs document and history per page) and its sync WebSockets
+    src/sync/   POST /mcp/sync (sync tickets) and GET /sync/socket
     src/account.ts  Account RPC the website calls over a service binding
     migrations/ D1 schema (shared with web)
 packages/
   shared/     Used by both apps: users, usernames, sessions, brian types,
               BRIAN.md templates, LIMITS (every tunable amount), crypto helpers
+  sync/       Shared by the server and the plugin: the sync protocol, text → Yjs edits,
+              path rules, and the headless sync engine (BrianSync)
+apps/obsidian/  The Obsidian plugin: sign-in, one sync engine per brian, vault events
 docs/         Private notes (gitignored)
 ```
 
-One origin serves everything. `/mcp`, `/authorize`, `/oauth/*` and `/.well-known/oauth-*` go to `apps/server`; everything else goes to `apps/web`. In dev and prod that's Workers Routes on the zone. Locally, Vite proxies those paths to `wrangler dev`.
+One origin serves everything. `/mcp`, `/authorize`, `/oauth/*`, `/sync/*` and `/.well-known/oauth-*` go to `apps/server`; everything else goes to `apps/web`. In dev and prod that's Workers Routes on the zone. Locally, Vite proxies those paths to `wrangler dev`.
 
 ## Brians
 
@@ -56,6 +61,14 @@ pnpm db:migrate
 pnpm dev                                           # open http://localhost:5173
 pnpm test                                          # server tests run in the Workers runtime
 ```
+
+### The Obsidian plugin
+
+```sh
+pnpm --filter @brian/obsidian build     # or `dev` to rebuild on every change
+```
+
+Copy `apps/obsidian/dist/main.js` and `apps/obsidian/manifest.json` into `<vault>/.obsidian/plugins/brian/`, turn on community plugins, and enable Brian. For dev, set Settings → Brian → Server to `https://dev.mybrian.dev` before signing in. Use a test vault: the plugin syncs the whole vault.
 
 Local OAuth redirect URIs: `http://localhost:5173/login/google/callback` and `http://localhost:5173/login/github/callback`. Apple only works in dev and prod.
 
