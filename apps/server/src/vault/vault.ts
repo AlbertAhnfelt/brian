@@ -1,6 +1,17 @@
 import { DurableObject } from 'cloudflare:workers';
 import { LIMITS } from '@brian/shared';
-import { checkMarkdown, checkSize, ftsQuery, normalizePath, normalizePrefix, VaultError } from './paths';
+import {
+	checkMarkdown,
+	checkSize,
+	foldPath,
+	ftsQuery,
+	normalizePath,
+	normalizePrefix,
+	normalizeText,
+	numbered,
+	repairPath,
+	VaultError
+} from './paths';
 
 export interface Page {
 	path: string;
@@ -40,6 +51,9 @@ export interface Changes {
  *
  * Every write takes the next number from a per-vault counter (`seq`), and deletes leave a
  * record, so a sync client can ask for everything that changed since the last number it saw.
+ *
+ * Paths are case-insensitive, like files on a Mac, Windows or a phone: a page keeps the casing it
+ * was created with, any casing finds it, and a new page joins its folder's existing casing.
  *
  * Every method runs synchronous SQL with no awaits in between, so each call is atomic.
  */
@@ -87,22 +101,62 @@ export class Vault extends DurableObject<Env> {
 			CREATE INDEX IF NOT EXISTS pages_seq ON pages (seq);
 			CREATE INDEX IF NOT EXISTS deleted_seq ON deleted (seq);
 		`);
+		const hasFold = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM pragma_table_info('pages') WHERE name = 'fold'`).one().n;
+		if (!hasFold) this.ctx.storage.transactionSync(() => this.repairPaths());
+		this.sql.exec(`CREATE UNIQUE INDEX IF NOT EXISTS pages_fold ON pages (fold)`);
+	}
+
+	/**
+	 * One-time migration to the path rules every device can store (see `normalizePath`): adds the
+	 * case-insensitive `fold` key, repairs paths stored under older rules, gives each folder one
+	 * casing, renames pages that now clash to "name 2.md", and converts line endings to LF.
+	 * Never deletes a page: when unsure, keep.
+	 */
+	private repairPaths(): void {
+		this.sql.exec(`ALTER TABLE pages ADD COLUMN fold TEXT NOT NULL DEFAULT ''`);
+		const rows = this.sql.exec<{ path: string; content: string }>(`SELECT path, content FROM pages ORDER BY rowid`).toArray();
+		// Valid paths claim their names first, so repairing a broken path never moves a good page.
+		const valid = (path: string) => repairPath(path) === path;
+		rows.sort((a, b) => Number(valid(b.path)) - Number(valid(a.path)));
+		// Work out every target in memory first, so no write can land on a row not yet looked at.
+		const folders = new Map<string, string>(); // folded folder prefix → the casing it keeps
+		const taken = new Set<string>();
+		const plan = rows.map((row) => {
+			const segments = repairPath(row.path).split('/');
+			for (let i = 1; i < segments.length; i++) {
+				const folded = foldPath(segments.slice(0, i).join('/'));
+				const kept = folders.get(folded);
+				if (kept) segments.splice(0, i, ...kept.split('/'));
+				else folders.set(folded, segments.slice(0, i).join('/'));
+			}
+			let target = segments.join('/');
+			for (let n = 2; taken.has(foldPath(target)); n++) target = numbered(segments.join('/'), n);
+			taken.add(foldPath(target));
+			return { ...row, target, text: normalizeText(row.content) };
+		});
+		const moved = plan.filter((p) => p.target !== p.path);
+		for (const p of moved) this.remove(p.path);
+		for (const p of plan) {
+			if (p.target !== p.path || p.text !== p.content) this.put(p.target, p.text);
+			else this.sql.exec(`UPDATE pages SET fold = ? WHERE path = ?`, foldPath(p.path), p.path);
+		}
 	}
 
 	/** Folders and files directly under a prefix, like `ls`. */
 	list(prefix = ''): Listing {
 		const base = normalizePrefix(prefix);
+		const depth = base.split('/').length - 1;
 		const folders = new Set<string>();
 		const files: string[] = [];
 		const rows = this.sql.exec<{ path: string }>(
-			`SELECT path FROM pages WHERE substr(path, 1, length(?1)) = ?1 ORDER BY path`,
-			base
+			`SELECT path FROM pages WHERE substr(fold, 1, length(?1)) = ?1 ORDER BY path`,
+			foldPath(base)
 		);
 		for (const { path } of rows) {
-			const rest = path.slice(base.length);
-			const slash = rest.indexOf('/');
-			if (slash === -1) files.push(path);
-			else folders.add(base + rest.slice(0, slash + 1));
+			// By segments, not characters: lowercasing can change a string's length.
+			const segments = path.split('/');
+			if (segments.length === depth + 1) files.push(path);
+			else folders.add(`${segments.slice(0, depth + 1).join('/')}/`);
 		}
 		return { folders: [...folders], files };
 	}
@@ -134,24 +188,29 @@ export class Vault extends DurableObject<Env> {
 	write(path: string, content: string, expectedEtag?: string): Page {
 		return this.ctx.storage.transactionSync(() => {
 			const key = normalizePath(path);
-			checkSize(content);
+			const text = normalizeText(content);
+			checkSize(text);
 			const existing = this.find(key);
 			if (expectedEtag === undefined && existing) {
-				throw new VaultError(`"${key}" already exists. Read it and pass its etag to overwrite it.`);
+				throw new VaultError(`"${existing.path}" already exists. Read it and pass its etag to overwrite it.`);
 			}
 			if (expectedEtag !== undefined && !existing) throw new VaultError(`No page at "${key}" to overwrite.`);
 			if (expectedEtag !== undefined && existing && existing.etag !== expectedEtag) {
-				throw new VaultError(`"${key}" changed since you read it. Read it again and retry.`);
+				throw new VaultError(`"${existing.path}" changed since you read it. Read it again and retry.`);
 			}
-			if (!existing) this.checkCanCreate(key);
-			return this.put(key, content);
+			if (existing) return this.put(existing.path, text);
+			const created = this.inExistingFolders(key);
+			this.checkCanCreate(created);
+			return this.put(created, text);
 		});
 	}
 
 	/** Exact string replacement. `oldString` must match exactly once unless `replaceAll`. */
-	edit(path: string, oldString: string, newString: string, replaceAll = false): Page {
+	edit(path: string, oldText: string, newText: string, replaceAll = false): Page {
 		return this.ctx.storage.transactionSync(() => {
 			const page = this.read(path);
+			const oldString = normalizeText(oldText);
+			const newString = normalizeText(newText);
 			const count = oldString ? page.content.split(oldString).length - 1 : 0;
 			if (count === 0) throw new VaultError(`The text to replace was not found in "${page.path}".`);
 			if (count > 1 && !replaceAll) {
@@ -168,9 +227,13 @@ export class Vault extends DurableObject<Env> {
 	move(from: string, to: string): Page {
 		return this.ctx.storage.transactionSync(() => {
 			const page = this.read(from);
-			const target = normalizePath(to);
+			let target = normalizePath(to);
 			checkMarkdown(target);
-			if (this.find(target)) throw new VaultError(`"${target}" already exists.`);
+			const clash = this.find(target);
+			// Only the page itself may already answer to the target: that's a change of case.
+			if (clash && clash.path !== page.path) throw new VaultError(`"${clash.path}" already exists.`);
+			if (!clash) target = this.inExistingFolders(target);
+			if (target === page.path) return page;
 			this.remove(page.path);
 			return this.put(target, page.content);
 		});
@@ -248,15 +311,33 @@ export class Vault extends DurableObject<Env> {
 		}
 	}
 
+	/** The page at `path` in any casing (paths are case-insensitive), or null. */
 	private find(path: string): Page | null {
 		const rows = this.sql
 			.exec<{ path: string; content: string; etag: string; updated_at: number }>(
-				`SELECT path, content, etag, updated_at FROM pages WHERE path = ?`,
-				path
+				`SELECT path, content, etag, updated_at FROM pages WHERE fold = ?`,
+				foldPath(path)
 			)
 			.toArray();
 		const row = rows[0];
 		return row ? { path: row.path, content: row.content, etag: row.etag, updatedAt: row.updated_at } : null;
+	}
+
+	/**
+	 * `path` with its folders in the casing they already have ("Notes/x.md" → "notes/x.md" when
+	 * notes/ exists), so a folder never splits into two that a Mac or Windows would merge.
+	 */
+	private inExistingFolders(path: string): string {
+		const segments = path.split('/');
+		for (let i = segments.length - 1; i > 0; i--) {
+			const prefix = `${foldPath(segments.slice(0, i).join('/'))}/`;
+			// Every folded path that starts with `prefix` sorts in [prefix, prefix with "/" → "0").
+			const row = this.sql
+				.exec<{ path: string }>(`SELECT path FROM pages WHERE fold >= ?1 AND fold < ?2 LIMIT 1`, prefix, `${prefix.slice(0, -1)}0`)
+				.toArray()[0];
+			if (row) return [...row.path.split('/').slice(0, i), ...segments.slice(i)].join('/');
+		}
+		return path;
 	}
 
 	/** The next change number. Never reused, even after the page that had it is gone. */
@@ -271,10 +352,11 @@ export class Vault extends DurableObject<Env> {
 	private put(path: string, content: string): Page {
 		const page = { path, content, etag: crypto.randomUUID(), updatedAt: Date.now() };
 		this.sql.exec(
-			`INSERT INTO pages (path, content, etag, updated_at, seq) VALUES (?, ?, ?, ?, ?)
-			 ON CONFLICT (path) DO UPDATE SET content = excluded.content, etag = excluded.etag,
+			`INSERT INTO pages (path, fold, content, etag, updated_at, seq) VALUES (?, ?, ?, ?, ?, ?)
+			 ON CONFLICT (path) DO UPDATE SET fold = excluded.fold, content = excluded.content, etag = excluded.etag,
 			   updated_at = excluded.updated_at, seq = excluded.seq`,
 			page.path,
+			foldPath(page.path),
 			page.content,
 			page.etag,
 			page.updatedAt,

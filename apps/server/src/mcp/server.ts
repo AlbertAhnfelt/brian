@@ -86,7 +86,7 @@ export async function createServer(): Promise<McpServer> {
 		'write_page',
 		{
 			description:
-				`Create a page, or fully overwrite one. Pages are markdown: paths must end in .md, and each brian holds up to ${LIMITS.pagesPerBrian.toLocaleString('en-US')} pages. Shared brians you view are read-only. To create: omit expected_etag (fails if the page exists). To overwrite: pass the etag from read_page (fails if the page changed since; re-read and retry). For small changes prefer edit_page.`,
+				`Create a page, or fully overwrite one. Pages are markdown: paths must end in .md, are case-insensitive, and must be valid file names on any device (no \\ : * ? \" < > |, no leading dot); each brian holds up to ${LIMITS.pagesPerBrian.toLocaleString('en-US')} pages. Shared brians you view are read-only. To create: omit expected_etag (fails if the page exists). To overwrite: pass the etag from read_page (fails if the page changed since; re-read and retry). For small changes prefer edit_page.`,
 			inputSchema: z.object({ path: z.string().min(1), content: z.string(), expected_etag: z.string().optional() })
 		},
 		({ path, content, expected_etag }) =>

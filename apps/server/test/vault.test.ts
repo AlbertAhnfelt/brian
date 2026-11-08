@@ -137,7 +137,7 @@ describe('Vault hardening', () => {
 	});
 
 	it.each(['notes/a.txt', 'image.png', 'notes/.md', 'md', 'a.md.txt'])('refuses to create non-markdown page %j', async (path) => {
-		expect(await failure(vault().write(path, 'x'))).toMatch(/must end in \.md/);
+		expect(await failure(vault().write(path, 'x'))).toMatch(/must end in \.md|starts with a dot/);
 	});
 
 	it('accepts .md in any case, and refuses to move a page to a non-markdown path', async () => {
@@ -151,7 +151,7 @@ describe('Vault hardening', () => {
 	it('still reads, edits and deletes older non-markdown pages', async () => {
 		const v = vault();
 		await runInDurableObject(v, (_, state) => {
-			state.storage.sql.exec(`INSERT INTO pages (path, content, etag, updated_at) VALUES ('old.txt', 'hi', 'e1', 0)`);
+			state.storage.sql.exec(`INSERT INTO pages (path, fold, content, etag, updated_at) VALUES ('old.txt', 'old.txt', 'hi', 'e1', 0)`);
 		});
 		await v.write('old.txt', 'hello', 'e1');
 		await v.edit('old.txt', 'hello', 'hey');
@@ -165,7 +165,7 @@ describe('Vault hardening', () => {
 		await runInDurableObject(v, (_, state) => {
 			state.storage.sql.exec(
 				`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 9999)
-				 INSERT INTO pages (path, content, etag, updated_at) SELECT 'p' || i || '.md', '', 'e', 0 FROM n`
+				 INSERT INTO pages (path, fold, content, etag, updated_at) SELECT 'p' || i || '.md', 'p' || i || '.md', '', 'e', 0 FROM n`
 			);
 		});
 		expect(await failure(v.write('b.md', 'two'))).toMatch(/full \(10,000 pages\)/);
@@ -240,5 +240,71 @@ describe('change feed', () => {
 		const hits = await v.search('apples');
 		expect(hits.map((h) => h.path)).toEqual(['apples.md', 'other.md']);
 		expect(hits[0].score).toBeLessThan(hits[1].score);
+	});
+});
+
+describe('case-insensitive paths', () => {
+	it('finds a page in any casing and refuses a case-only duplicate', async () => {
+		const v = vault();
+		await v.write('Notes/Plan.md', 'hello');
+		expect((await v.read('notes/plan.md')).path).toBe('Notes/Plan.md');
+		expect(await failure(v.write('notes/PLAN.md', 'other'))).toMatch(/"Notes\/Plan.md" already exists/);
+		const { etag } = await v.read('NOTES/plan.md');
+		expect((await v.write('notes/plan.md', 'updated', etag)).path).toBe('Notes/Plan.md');
+	});
+
+	it('puts new pages into the folder casing that exists', async () => {
+		const v = vault();
+		await v.write('Notes/Deep/a.md', 'a');
+		expect((await v.write('notes/deep/b.md', 'b')).path).toBe('Notes/Deep/b.md');
+		expect((await v.write('NOTES/other/c.md', 'c')).path).toBe('Notes/other/c.md');
+		expect(await v.list('notes')).toEqual({ folders: ['Notes/Deep/', 'Notes/other/'], files: [] });
+	});
+
+	it('renames by case, but not onto another page', async () => {
+		const v = vault();
+		await v.write('a.md', 'a');
+		await v.write('b.md', 'b');
+		expect((await v.move('a.md', 'A.md')).path).toBe('A.md');
+		expect(await failure(v.move('A.md', 'B.md'))).toMatch(/"b.md" already exists/);
+	});
+
+	it('stores LF line endings, and edits match across them', async () => {
+		const v = vault();
+		await v.write('a.md', 'one\r\ntwo\r\n');
+		expect((await v.read('a.md')).content).toBe('one\ntwo\n');
+		await v.edit('a.md', 'one\r\ntwo', 'uno\r\ndos');
+		expect((await v.read('a.md')).content).toBe('uno\ndos\n');
+	});
+
+	it('repairs a vault stored under the old rules, without losing a page', async () => {
+		const v = vault();
+		await v.write('keep.md', 'keep');
+		await runInDurableObject(v, (instance, state) => {
+			const sql = state.storage.sql;
+			sql.exec(`DROP INDEX pages_fold`);
+			sql.exec(`ALTER TABLE pages DROP COLUMN fold`);
+			const add = (path: string, content: string) =>
+				sql.exec(`INSERT INTO pages (path, content, etag, updated_at, seq) VALUES (?, ?, 'e', 0, 0)`, path, content);
+			add('Notes/a.md', 'a');
+			add('notes/b.md', 'b');
+			add('Keep.md', 'second keep');
+			add('a:b.md', 'colon');
+			add('a-b.md', 'dash');
+			add('crlf.md', 'x\r\ny');
+			(instance as unknown as { migrate(): void }).migrate();
+		});
+		const all = Object.fromEntries((await v.exportAll()).map((p) => [p.path, p.content]));
+		expect(all).toEqual({
+			'keep.md': 'keep',
+			'Notes/a.md': 'a',
+			'Notes/b.md': 'b',
+			'Keep 2.md': 'second keep',
+			'a-b 2.md': 'colon',
+			'a-b.md': 'dash',
+			'crlf.md': 'x\ny'
+		});
+		expect(await failure(v.write('KEEP.md', 'x'))).toMatch(/already exists/);
+		expect((await v.changes(0)).changes.filter((c) => c.deleted).map((c) => c.path).sort()).toEqual(['Keep.md', 'a:b.md', 'notes/b.md']);
 	});
 });

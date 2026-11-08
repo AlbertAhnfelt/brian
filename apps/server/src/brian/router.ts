@@ -1,5 +1,5 @@
 import type { BrianSummary } from '@brian/shared';
-import { normalizePath, normalizePrefix, VaultError } from '../vault/paths';
+import { foldPath, normalizePath, normalizePrefix, VaultError } from '../vault/paths';
 import type { Listing, Page, SearchHit, Vault } from '../vault/vault';
 import { membershipsOf, type Bindings } from './members';
 
@@ -40,7 +40,7 @@ export class Brian {
 	async list(prefix = ''): Promise<Listing> {
 		const base = normalizePrefix(prefix);
 		this.ready();
-		const mounted = /^brian\/([^/]+)\//.exec(base);
+		const mounted = /^brian\/([^/]+)\//i.exec(base);
 		const brian = mounted && this.mount(mounted[1]);
 		if (brian) {
 			const target = this.targetOf(brian, base.slice(mounted[0].length));
@@ -49,7 +49,7 @@ export class Brian {
 		}
 		const own = await this.personal().list(base);
 		// Shared brians show up as folders in brian/, and brian/ itself in the root.
-		const extra = base === 'brian/' ? this.brians.map((b) => `brian/${b.mount}/`) : base === '' && this.brians.length ? ['brian/'] : [];
+		const extra = foldPath(base) === 'brian/' ? this.brians.map((b) => `brian/${b.mount}/`) : base === '' && this.brians.length ? ['brian/'] : [];
 		const folders = [...new Set([...own.folders, ...extra])].sort();
 		return { folders, files: own.files };
 	}
@@ -108,7 +108,7 @@ export class Brian {
 	private route(path: string): Target {
 		const key = normalizePath(path);
 		this.ready();
-		const mounted = /^brian\/([^/]+)\/(.+)$/.exec(key);
+		const mounted = /^brian\/([^/]+)\/(.+)$/i.exec(key);
 		const brian = mounted && this.mount(mounted[1]);
 		if (brian) return this.targetOf(brian, mounted[2]);
 		return { vault: this.personal(), inner: key, outer: '', brian: null };
@@ -119,7 +119,8 @@ export class Brian {
 	}
 
 	private mount(name: string): BrianSummary | undefined {
-		return this.brians.find((b) => b.mount === name);
+		// Paths are case-insensitive, so "Brian/Acme/" reaches brian/acme/ too.
+		return this.brians.find((b) => foldPath(b.mount) === foldPath(name));
 	}
 
 	private personal() {

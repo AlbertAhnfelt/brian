@@ -7,7 +7,8 @@ export class VaultError extends Error {}
  * Throws VaultError for paths that can't be stored.
  */
 export function normalizePath(input: string): string {
-	const path = input.trim().replace(/^\/+/, '');
+	// NFC: "\u00e5" typed on a Mac (often decomposed) and elsewhere must be the same page.
+	const path = input.trim().replace(/^\/+/, '').normalize('NFC');
 	const segments = path.split('/');
 	if (!path || path.endsWith('/')) throw new VaultError(`"${input}" is not a page path.`);
 	if (path.length > LIMITS.pathLength) throw new VaultError(`Paths can be at most ${LIMITS.pathLength} characters.`);
@@ -15,11 +16,64 @@ export function normalizePath(input: string): string {
 		throw new VaultError(`"${input}" has an empty, "." or ".." segment.`);
 	}
 	if (/[\u0000-\u001f\u007f]/.test(path)) throw new VaultError('Paths cannot contain control characters.');
-	// Unsafe in exported zips ("\" and ":" are separators/drives on Windows) or visually deceptive.
-	if (/[\\:]|\p{Cf}|[\u2215\u2044\uff0f]/u.test(path)) {
-		throw new VaultError('Paths cannot contain \\, :, slash look-alikes or invisible formatting characters.');
+	// Every page must be a file that Obsidian can create on any device, Windows included.
+	if (FORBIDDEN.test(path)) {
+		throw new VaultError('Paths cannot contain \\ : * ? " < > |, slash look-alikes or invisible formatting characters.');
+	}
+	for (const segment of segments) {
+		if (segment.startsWith('.')) throw new VaultError(`"${segment}" starts with a dot: Obsidian hides such files and folders.`);
+		if (/[ .]$/.test(segment)) throw new VaultError(`"${segment}" ends with a space or a dot, which Windows can't store.`);
+		if (RESERVED.test(segment)) throw new VaultError(`"${segment}" is a reserved name on Windows.`);
 	}
 	return path;
+}
+
+/** "\" and ":" are separators on Windows; the rest Windows can't store; then look-alikes and invisibles. */
+const FORBIDDEN = /[\\:*?"<>|]|\p{Cf}|[\u2215\u2044\uff0f]/u;
+/** Windows device names, with or without an extension ("con.md"). */
+const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
+/**
+ * The case-insensitive form of a normalized path. Macs, Windows and phones treat "Note.md" and
+ * "note.md" as one file, so the vault never holds two pages that differ only in case.
+ */
+export function foldPath(path: string): string {
+	return path.toLowerCase().normalize('NFC');
+}
+
+/** "notes/idea.md" with n = 2 → "notes/idea 2.md", the name given to the second of two pages. */
+export function numbered(path: string, n: number): string {
+	const slash = path.lastIndexOf('/') + 1;
+	const name = path.slice(slash);
+	const dot = name.lastIndexOf('.');
+	const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+	return `${path.slice(0, slash)}${stem} ${n}${ext}`;
+}
+
+/** Page text with LF line endings only, as Obsidian writes it. */
+export function normalizeText(text: string): string {
+	return text.includes('\r') ? text.replace(/\r\n?/g, '\n') : text;
+}
+
+/**
+ * The closest valid path to one stored before the current rules, for migrating old pages.
+ * Never fails: whatever can't be repaired becomes a placeholder name.
+ */
+export function repairPath(path: string): string {
+	const segments = path
+		.normalize('NFC')
+		.replace(/[\u0000-\u001f\u007f]/g, '')
+		.replace(new RegExp(FORBIDDEN.source, 'gu'), '-')
+		.split('/')
+		.map((s) => s.trim().replace(/^\.+/, '').replace(/[ .]+$/, ''))
+		.map((s) => (RESERVED.test(s) ? `${s}-` : s))
+		.filter((s) => s && s !== '..');
+	const repaired = segments.join('/').slice(0, LIMITS.pathLength);
+	try {
+		return normalizePath(repaired);
+	} catch {
+		return 'untitled.md';
+	}
 }
 
 /** Throws unless `path` names a markdown page. Brian stores and syncs .md files only. */
@@ -29,7 +83,7 @@ export function checkMarkdown(path: string): void {
 
 /** Normalizes a folder prefix for list(): "" for the root, otherwise ending in "/". */
 export function normalizePrefix(input = ''): string {
-	const prefix = input.trim().replace(/^\/+/, '').replace(/\/*$/, '');
+	const prefix = input.trim().replace(/^\/+/, '').replace(/\/*$/, '').normalize('NFC');
 	return prefix ? `${normalizePath(prefix)}/` : '';
 }
 

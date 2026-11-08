@@ -1,6 +1,6 @@
 import { safeNext } from '@brian/shared';
 import { describe, expect, it } from 'vitest';
-import { ftsQuery, normalizePath, normalizePrefix } from '../src/vault/paths';
+import { foldPath, ftsQuery, normalizePath, normalizePrefix, normalizeText, numbered, repairPath } from '../src/vault/paths';
 
 describe('normalizePath', () => {
 	it('strips leading slashes and keeps folders', () => {
@@ -49,4 +49,33 @@ describe('safeNext', () => {
 		'falls back for %j',
 		(next) => expect(safeNext(next)).toBe('/connect')
 	);
+});
+
+describe('path rules every device can store', () => {
+	it.each(['a*b.md', 'a?.md', 'say "hi".md', 'a<b>.md', 'a|b.md', 'a:b.md', '.hidden/x.md', 'notes/.x.md', 'trailing /x.md', 'dot./x.md', 'x.md.', 'con.md', 'Notes/LPT1/x.md', 'a​b.md'])(
+		'rejects %j',
+		(path) => expect(() => normalizePath(path)).toThrow()
+	);
+
+	it('accepts what Obsidian accepts', () => {
+		for (const path of ['möten/2026 #1 [draft].md', 'a^b.md', 'console.md', 'Ångström.md']) expect(normalizePath(path)).toBe(path);
+	});
+
+	it('stores "å" one way, however it was typed', () => {
+		expect(normalizePath('å.md')).toBe('å.md');
+	});
+
+	it('folds case, numbers clashes, and converts line endings', () => {
+		expect(foldPath('Möten/Plan.MD')).toBe('möten/plan.md');
+		expect(numbered('notes/idea.md', 2)).toBe('notes/idea 2.md');
+		expect(numbered('README', 3)).toBe('README 3');
+		expect(normalizeText('a\r\nb\rc\n')).toBe('a\nb\nc\n');
+	});
+
+	it('repairs old paths into valid ones', () => {
+		expect(repairPath('a:b/c*d.md')).toBe('a-b/c-d.md');
+		expect(repairPath('.hidden/con/x.md')).toBe('hidden/con-/x.md');
+		expect(repairPath('ok/fine.md')).toBe('ok/fine.md');
+		expect(repairPath('...')).toBe('untitled.md');
+	});
 });
