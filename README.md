@@ -61,6 +61,6 @@ Local OAuth redirect URIs: `http://localhost:5173/login/google/callback` and `ht
 
 ### Troubleshooting
 
-- **`wrangler types --check` fails after a build** ("Types at worker-configuration.d.ts are out of date"): a leftover build in `apps/web/.svelte-kit/cloudflare` changes the generated types. Delete `.svelte-kit/cloudflare` and `.svelte-kit/output`, then run the check or deploy again.
+- **Build output and type checks:** a leftover build in `apps/web/.svelte-kit/cloudflare` changes the generated Worker types, so `wrangler types --check` would fail. The website's `build` and `check` scripts run `pnpm clean` first, which removes it. If you run `wrangler types --check` by hand after a build, run `pnpm --filter @brian/web clean` first.
 - **Cross-site form posts aren't blocked under `vite dev`.** SvelteKit's origin check only takes effect in a built app. A production build returns 403, so don't rely on the dev server for CSRF testing.
 - If the website seems to talk to old server code (stale data, missing logs), an old `wrangler dev` is probably still registered in Wrangler's dev registry. Stop it with `pkill -f "wrangler.js dev"` and run `pnpm dev` again.
