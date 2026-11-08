@@ -17,6 +17,13 @@
 	<h1>Account</h1>
 	<p>Signed in as {data.user?.email}.</p>
 
+	<h2>Username</h2>
+	{#if data.user?.username}
+		<p><strong class="ink">{data.user.username}</strong> · names your brian and the <code>brian/{data.user.username}/</code> folder.</p>
+	{:else}
+		<p>You haven't picked one yet. <a href="/welcome?next=/account">Pick a username</a> to finish setting up your Brian.</p>
+	{/if}
+
 	<h2>Logins</h2>
 	<ul>
 		{#each data.logins as login (login.provider)}
@@ -104,6 +111,11 @@
 	.muted,
 	p {
 		color: var(--muted);
+	}
+
+	.ink {
+		color: var(--ink);
+		font-weight: 500;
 	}
 
 	.small {
