@@ -13,10 +13,19 @@
 	<h1>Pick a username</h1>
 	<p>
 		It names your own brian, and the folder <code>brian/&lt;username&gt;/</code> where your agents write.
-		You can't change it later.
+	</p>
+	<p class="warning" role="note">
+		<strong>You can set it only once.</strong> It can't be changed later, so choose carefully.
 	</p>
 
-	<form method="post" use:enhance>
+	<form
+		method="post"
+		use:enhance={({ formData, cancel }) => {
+			// Advisory only: the server sets the username once (UPDATE … WHERE username IS NULL).
+			const name = String(formData.get('username') ?? '').trim().toLowerCase();
+			if (!confirm(`Your username will be "${name}". You can't change it later. Continue?`)) cancel();
+		}}
+	>
 		<input
 			name="username"
 			value={form?.username ?? ''}
@@ -63,6 +72,13 @@
 		border-radius: 0.5rem;
 		background: var(--bg);
 		font: inherit;
+	}
+
+	.warning {
+		padding: 0.6rem 0.8rem;
+		border: 1px solid var(--collar);
+		border-radius: 0.5rem;
+		color: inherit;
 	}
 
 	.rules {
