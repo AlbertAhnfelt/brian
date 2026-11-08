@@ -3,7 +3,7 @@
 		"target": "es2024",
 		"module": "es2022",
 		"moduleResolution": "bundler",
-		"lib": ["es2024", "esnext.string"],
+		"lib": ["es2024", "esnext.string", "dom"],
 		"strict": true,
 		"noEmit": true,
 		"isolatedModules": true,

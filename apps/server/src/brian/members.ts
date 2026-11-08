@@ -167,7 +167,8 @@ export async function addMember(env: Bindings, userId: string, brianId: string, 
 	return added.ok ? done : added;
 }
 
-export async function setRole(db: D1Database, userId: string, brianId: string, username: string, role: string): Promise<Outcome> {
+export async function setRole(env: Bindings, userId: string, brianId: string, username: string, role: string): Promise<Outcome> {
+	const db = env.DB;
 	if (!isMemberRole(role)) return no('Members are editors or viewers.');
 	if (!(await owned(db, userId, brianId))) return no(NOT_FOUND);
 	const user = await userByUsername(db, username);
@@ -176,10 +177,13 @@ export async function setRole(db: D1Database, userId: string, brianId: string, u
 		.prepare(`UPDATE members SET role = ? WHERE brian_id = ? AND user_id = ? AND role != 'owner'`)
 		.bind(role, brianId, user.id)
 		.run();
-	return result.meta.changes ? done : no(`${user.username} isn't a member.`);
+	if (!result.meta.changes) return no(`${user.username} isn't a member.`);
+	await kick(env, brianId, user.id);
+	return done;
 }
 
-export async function removeMember(db: D1Database, userId: string, brianId: string, username: string): Promise<Outcome> {
+export async function removeMember(env: Bindings, userId: string, brianId: string, username: string): Promise<Outcome> {
+	const db = env.DB;
 	if (!(await owned(db, userId, brianId))) return no(NOT_FOUND);
 	const user = await userByUsername(db, username);
 	if (!user || user.id === userId) return no(`${normalizeName(username)} isn't a member you can remove.`);
@@ -187,7 +191,9 @@ export async function removeMember(db: D1Database, userId: string, brianId: stri
 		.prepare(`DELETE FROM members WHERE brian_id = ? AND user_id = ? AND role != 'owner'`)
 		.bind(brianId, user.id)
 		.run();
-	return result.meta.changes ? done : no(`${user.username} isn't a member.`);
+	if (!result.meta.changes) return no(`${user.username} isn't a member.`);
+	await kick(env, brianId, user.id);
+	return done;
 }
 
 /** "Sync to this brian": anyone can join a public brian, as a viewer. */
@@ -204,12 +210,19 @@ export async function join(env: Bindings, userId: string, brianId: string): Prom
 }
 
 /** Members leave. The owner can't: they delete the brian instead. */
-export async function leave(db: D1Database, userId: string, brianId: string): Promise<Outcome> {
+export async function leave(env: Bindings, userId: string, brianId: string): Promise<Outcome> {
+	const db = env.DB;
 	const mine = await membership(db, userId, brianId);
 	if (!mine) return no(NOT_FOUND);
 	if (mine.role === 'owner') return no("Owners can't leave their own brian. Delete it instead.");
 	await db.prepare('DELETE FROM members WHERE brian_id = ? AND user_id = ?').bind(brianId, userId).run();
+	await kick(env, brianId, userId);
 	return done;
+}
+
+/** Closes the user's sync sockets to a brian, so a new role (or none) applies at once. */
+async function kick(env: Bindings, brianId: string, userId: string): Promise<void> {
+	await env.VAULT.getByName(brianId).kick(userId);
 }
 
 /** Erases the brian's pages for every member. Owner only. */
@@ -245,8 +258,10 @@ export async function setUp(env: Bindings, userId: string): Promise<void> {
 
 /** For account deletion: erases the brians the user owns and leaves the rest. */
 export async function removeUserFromBrians(env: Bindings, userId: string): Promise<void> {
-	for (const brian of await membershipsOf(env.DB, userId)) {
+	const brians = await membershipsOf(env.DB, userId);
+	for (const brian of brians) {
 		if (brian.role === 'owner') await destroyBrian(env, brian.id);
 	}
 	await env.DB.prepare('DELETE FROM members WHERE user_id = ?').bind(userId).run();
+	for (const brian of brians) if (brian.role !== 'owner') await kick(env, brian.id, userId);
 }

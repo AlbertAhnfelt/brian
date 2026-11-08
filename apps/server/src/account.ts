@@ -74,11 +74,11 @@ export class Account extends WorkerEntrypoint<Env> implements AccountRpc {
 	}
 
 	setRole(userId: string, brianId: string, username: string, role: Exclude<Role, 'owner'>): Promise<Outcome> {
-		return members.setRole(this.env.DB, userId, brianId, username, role);
+		return members.setRole(this.env, userId, brianId, username, role);
 	}
 
 	removeMember(userId: string, brianId: string, username: string): Promise<Outcome> {
-		return members.removeMember(this.env.DB, userId, brianId, username);
+		return members.removeMember(this.env, userId, brianId, username);
 	}
 
 	join(userId: string, brianId: string): Promise<Outcome<BrianSummary>> {
@@ -86,7 +86,7 @@ export class Account extends WorkerEntrypoint<Env> implements AccountRpc {
 	}
 
 	leave(userId: string, brianId: string): Promise<Outcome> {
-		return members.leave(this.env.DB, userId, brianId);
+		return members.leave(this.env, userId, brianId);
 	}
 
 	deleteBrian(userId: string, brianId: string): Promise<Outcome> {

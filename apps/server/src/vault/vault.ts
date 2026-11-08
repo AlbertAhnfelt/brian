@@ -1,6 +1,20 @@
 import { DurableObject } from 'cloudflare:workers';
-import { LIMITS } from '@brian/shared';
-import { applySplices, splices, TEXT, type Splice } from '@brian/sync';
+import { LIMITS, loginAllowed } from '@brian/shared';
+import {
+	applySplices,
+	decodeFrame,
+	encodeFrame,
+	MAX_PULL,
+	PAGE_ID,
+	splices,
+	TEXT,
+	type ErrorCode,
+	type FeedEntry,
+	type PulledPage,
+	type Reply,
+	type Role,
+	type Splice
+} from '@brian/sync';
 import * as Y from 'yjs';
 import {
 	checkMarkdown,
@@ -58,7 +72,7 @@ export interface Changes {
 
 /** One line of a page's history. Consecutive edits by the same author are merged into one. */
 export interface HistoryEntry {
-	action: 'create' | 'edit' | 'move' | 'delete';
+	action: 'create' | 'edit' | 'move' | 'delete' | 'restore';
 	path: string;
 	fromPath: string | null;
 	user: string;
@@ -72,7 +86,31 @@ const BRIAN: Author = { user: '', source: 'brian' };
 const HISTORY_MERGE_MS = 5 * 60 * 1000;
 /** Durable Object SQLite rows are capped at 2 MB, so Yjs state is stored in parts. */
 const PART_BYTES = 512 * 1024;
-const SCHEMA = 2;
+const SCHEMA = 3;
+/** Sync tickets work once, within this long of being issued. */
+const TICKET_MS = 60 * 1000;
+/** Largest Yjs state a page may grow to (its text is capped at LIMITS.pageBytes). */
+const MAX_STATE_BYTES = 8 * 1024 * 1024;
+/** A pull answer stops adding pages past this many bytes; the rest are marked `later`. */
+const PULL_BYTES = 4 * 1024 * 1024;
+
+/** A device connected over a WebSocket, as stored on its socket (survives hibernation). */
+interface Session {
+	user: string;
+	email: string;
+	source: string;
+	role: Role;
+}
+
+/** A sync request refused with a protocol error code. */
+class SyncError extends Error {
+	constructor(
+		readonly code: ErrorCode,
+		message: string
+	) {
+		super(message);
+	}
+}
 /** A replace_all with more matches than this is applied as one diff instead of one splice each. */
 const MAX_EXACT_SPLICES = 200;
 
@@ -113,7 +151,8 @@ export class Vault extends DurableObject<Env> {
 		if (version === SCHEMA) return;
 		this.ctx.storage.transactionSync(() => {
 			if (version === 0 || !tables.has('pages')) this.createSchema();
-			else this.upgradeFromV1();
+			else if (version === 1) this.upgradeFromV1();
+			else this.addTickets();
 		});
 	}
 
@@ -163,10 +202,25 @@ export class Vault extends DurableObject<Env> {
 			);
 			CREATE VIRTUAL TABLE pages_fts USING fts5(path, content, tokenize = 'porter unicode61');
 		`);
-		this.sql.exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?)`, SCHEMA);
+		this.addTickets();
 		// This vault's Yjs client id. Writes run one at a time, after loading the latest state,
 		// so one id serves every server-side edit and keeps the documents' version vectors small.
 		this.sql.exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('client', ?)`, crypto.getRandomValues(new Uint32Array(1))[0] || 1);
+	}
+
+	/** Schema 3: one-time tickets that let a device open a sync WebSocket. */
+	private addTickets(): void {
+		this.sql.exec(`
+			CREATE TABLE IF NOT EXISTS tickets (
+				hash TEXT PRIMARY KEY,
+				user_id TEXT NOT NULL,
+				email TEXT NOT NULL,
+				source TEXT NOT NULL,
+				role TEXT NOT NULL,
+				expires_at INTEGER NOT NULL
+			);
+		`);
+		this.sql.exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?)`, SCHEMA);
 	}
 
 	/**
@@ -251,7 +305,7 @@ export class Vault extends DurableObject<Env> {
 	 * from read; fails if the page changed since).
 	 */
 	write(path: string, content: string, expectedEtag?: string, by: Author = BRIAN): Page {
-		return this.ctx.storage.transactionSync(() => {
+		return this.commit(() => {
 			const key = normalizePath(path);
 			const text = normalizeText(content);
 			checkSize(text);
@@ -272,7 +326,7 @@ export class Vault extends DurableObject<Env> {
 
 	/** Exact string replacement. `oldString` must match exactly once unless `replaceAll`. */
 	edit(path: string, oldText: string, newText: string, replaceAll = false, by: Author = BRIAN): Page {
-		return this.ctx.storage.transactionSync(() => {
+		return this.commit(() => {
 			const page = this.read(path);
 			const oldString = normalizeText(oldText);
 			const newString = normalizeText(newText);
@@ -307,7 +361,7 @@ export class Vault extends DurableObject<Env> {
 
 	/** Renames a page, keeping its id and history. */
 	move(from: string, to: string, by: Author = BRIAN): Page {
-		return this.ctx.storage.transactionSync(() => {
+		return this.commit(() => {
 			const page = this.read(from);
 			let target = normalizePath(to);
 			checkMarkdown(target);
@@ -322,7 +376,12 @@ export class Vault extends DurableObject<Env> {
 
 	/** Renames a folder and everything in it, as one change. Fails if anything would clash. */
 	moveFolder(from: string, to: string, by: Author = BRIAN): string[] {
-		return this.ctx.storage.transactionSync(() => {
+		return this.commit(() => this.moveFolderInside(from, to, by, false));
+	}
+
+	/** Moves a folder; on a clash either refuses (MCP) or numbers the page "name 2.md" (sync). */
+	private moveFolderInside(from: string, to: string, by: Author, number: boolean): string[] {
+		{
 			const source = normalizePrefix(from);
 			const depth = source.split('/').length - 1;
 			const asked = normalizePrefix(to);
@@ -336,18 +395,26 @@ export class Vault extends DurableObject<Env> {
 				.toArray();
 			if (!pages.length) throw new VaultError(`No folder at "${source}".`);
 			const moves = pages.map((row) => ({ row, target: normalizePath(destination + row.path.split('/').slice(depth).join('/')) }));
-			for (const { row, target } of moves) {
-				const clash = this.find(target);
-				if (clash && clash.id !== row.id) throw new VaultError(`"${clash.path}" already exists.`);
+			if (!number) {
+				for (const { row, target } of moves) {
+					const clash = this.find(target);
+					if (clash && clash.id !== row.id) throw new VaultError(`"${clash.path}" already exists.`);
+				}
 			}
-			return moves.map(({ row, target }) => (target === row.path ? row.path : this.relocate(this.toPage(row), target, by).path));
-		});
+			return moves.map(({ row, target }) => {
+				const free = number ? this.freePath(target, row.id) : target;
+				return free === row.path ? row.path : this.relocate(this.toPage(row), free, by).path;
+			});
+		}
 	}
 
 	/** Soft delete: the page moves to the trash for LIMITS.trashDays days. */
 	delete(path: string, by: Author = BRIAN): void {
-		this.ctx.storage.transactionSync(() => {
-			const page = this.read(path);
+		this.commit(() => this.trashPage(this.read(path), by));
+	}
+
+	private trashPage(page: Page, by: Author): void {
+		{
 			const cutoff = Date.now() - LIMITS.trashDays * 24 * 60 * 60 * 1000;
 			this.sql.exec(`DELETE FROM trash WHERE deleted_at < ?`, cutoff);
 			// A trashed page keeps its Yjs state, so a late edit from another device can still bring it back.
@@ -366,7 +433,8 @@ export class Vault extends DurableObject<Env> {
 				Date.now()
 			);
 			this.record(page.id, 'delete', page.path, null, by);
-		});
+			this.emit({ t: 'gone', id: page.id, seq: this.currentSeq() });
+		}
 	}
 
 	/** Pages written or deleted after `since` (0 for everything), oldest first, `limit` at a time. */
@@ -424,11 +492,267 @@ export class Vault extends DurableObject<Env> {
 	async destroy(): Promise<void> {
 		// Clear the rows synchronously so the erase is visible at once, then drop the database.
 		this.ctx.storage.transactionSync(() => {
-			for (const table of ['pages', 'pages_fts', 'ystate', 'trash', 'deleted', 'history', 'meta']) this.sql.exec(`DELETE FROM ${table}`);
+			for (const table of ['pages', 'pages_fts', 'ystate', 'trash', 'deleted', 'history', 'tickets', 'meta']) this.sql.exec(`DELETE FROM ${table}`);
 		});
+		for (const ws of this.ctx.getWebSockets()) ws.close(4004, 'This brian was deleted.');
 		await this.ctx.storage.deleteAll();
 		// This instance may keep serving until it is evicted, so leave it a valid, empty database.
 		this.migrate();
+	}
+
+	// ---- Sync: devices connected over WebSockets (protocol in @brian/sync) ----
+
+	/** Messages for other devices, sent once the transaction that produced them commits. */
+	private outbox: Uint8Array[] = [];
+	/** The socket whose request is being handled: it hears back through its reply, not a broadcast. */
+	private origin: WebSocket | null = null;
+
+	/**
+	 * A one-time ticket that lets `user` open a sync WebSocket to this brian within a minute.
+	 * Only its hash is stored. The caller has already checked the user's role in this brian.
+	 */
+	async issueTicket(user: string, email: string, source: string, role: Role): Promise<string> {
+		const secret = base64url(crypto.getRandomValues(new Uint8Array(32)));
+		const hash = await sha256(secret);
+		this.sql.exec(`DELETE FROM tickets WHERE expires_at < ?`, Date.now());
+		this.sql.exec(
+			`INSERT INTO tickets (hash, user_id, email, source, role, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			hash,
+			user,
+			email,
+			source,
+			role,
+			Date.now() + TICKET_MS
+		);
+		return secret;
+	}
+
+	/** Opens a sync WebSocket for the holder of a valid ticket (`?ticket=<name>.<secret>`). */
+	async fetch(request: Request): Promise<Response> {
+		if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('Expected a WebSocket.', { status: 426 });
+		const secret = new URL(request.url).searchParams.get('ticket')?.split('.').pop() ?? '';
+		const hash = await sha256(secret);
+		// Looked up and spent in one synchronous step, so a ticket can't open two sockets.
+		const row = this.sql
+			.exec<{ user_id: string; email: string; source: string; role: Role }>(
+				`DELETE FROM tickets WHERE hash = ? AND expires_at >= ? RETURNING user_id, email, source, role`,
+				hash,
+				Date.now()
+			)
+			.toArray()[0];
+		if (!row) return new Response('This sync ticket is invalid or has expired.', { status: 401 });
+		const [client, server] = Object.values(new WebSocketPair());
+		this.ctx.acceptWebSocket(server);
+		server.serializeAttachment({ user: row.user_id, email: row.email, source: row.source, role: row.role } satisfies Session);
+		return new Response(null, { status: 101, webSocket: client });
+	}
+
+	/** Closes a user's sockets, e.g. when they leave the brian or their role changes. */
+	kick(user: string): void {
+		for (const ws of this.ctx.getWebSockets()) {
+			if ((ws.deserializeAttachment() as Session).user === user) ws.close(4003, 'Your membership changed. Reconnect.');
+		}
+	}
+
+	webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
+		let ref = 0;
+		try {
+			if (typeof message === 'string') throw new SyncError('bad-request', 'Send binary frames.');
+			let frame: ReturnType<typeof decodeFrame>;
+			try {
+				frame = decodeFrame(message);
+			} catch (error) {
+				throw new SyncError('bad-request', (error as Error).message);
+			}
+			ref = Number.isSafeInteger(frame.header.ref) ? (frame.header.ref as number) : 0;
+			const session = ws.deserializeAttachment() as Session;
+			// Dev's allowlist: an email taken off it stops syncing at its next message.
+			if (!loginAllowed(this.env, session.email)) {
+				ws.close(4003, 'Not allowed.');
+				return;
+			}
+			this.origin = ws;
+			const [reply, payloads] = this.handle(session, frame.header, frame.payloads);
+			ws.send(encodeFrame({ t: 'ok', ref, ...reply }, payloads));
+		} catch (error) {
+			const code: ErrorCode = error instanceof SyncError ? error.code : error instanceof VaultError ? 'refused' : 'bad-request';
+			if (!(error instanceof SyncError || error instanceof VaultError)) console.error('sync request failed', error);
+			ws.send(encodeFrame({ t: 'error', ref, code, message: (error as Error).message } satisfies Reply));
+		} finally {
+			this.origin = null;
+		}
+	}
+
+	webSocketClose(ws: WebSocket, code: number): void {
+		try {
+			ws.close(code === 1005 ? 1000 : code, 'Closed.');
+		} catch {
+			// Already closed.
+		}
+	}
+
+	/** Handles one request from a device; returns the fields and payloads of its `ok` reply. */
+	private handle(session: Session, header: Record<string, unknown>, payloads: Uint8Array[]): [Record<string, unknown>, Uint8Array[]?] {
+		const by: Author = { user: session.user, source: session.source };
+		const str = (name: string): string => {
+			const value = header[name];
+			if (typeof value !== 'string' || !value) throw new SyncError('bad-request', `"${name}" must be a non-empty string.`);
+			return value;
+		};
+		const pageId = (): string => {
+			const id = str('id');
+			if (!PAGE_ID.test(id)) throw new SyncError('bad-request', 'Page ids are "p_" and a UUID.');
+			return id;
+		};
+		const payload = (): Uint8Array => {
+			if (payloads.length !== 1) throw new SyncError('bad-request', 'Expected exactly one payload.');
+			return payloads[0];
+		};
+		if (header.t === 'changes') {
+			const since = header.since;
+			if (!Number.isSafeInteger(since) || (since as number) < 0) throw new SyncError('bad-request', '"since" must be a change number.');
+			const { changes, cursor, more } = this.changes(since as number);
+			const entries: FeedEntry[] = changes.map(({ seq, id, path, deleted }) => ({ seq, id, path, deleted }));
+			return [{ changes: entries, cursor, more }];
+		}
+		if (header.t === 'pull') return this.pull(header.ids, payloads);
+		if (session.role === 'viewer') throw new SyncError('read-only', "You're a viewer of this brian, so your changes don't sync.");
+		switch (header.t) {
+			case 'push': {
+				const id = pageId();
+				const update = payload();
+				const page = this.commit(() => {
+					const existing = this.byId(id);
+					if (existing) return this.applyUpdate(existing, update, by);
+					const restored = this.restore(id, update, by);
+					if (!restored) throw new SyncError('unknown', 'No such page: send it whole with "create".');
+					return restored;
+				});
+				return [{ seq: this.currentSeq(), path: page.path }];
+			}
+			case 'create': {
+				const id = pageId();
+				const path = str('path');
+				const state = payload();
+				const page = this.commit(() => {
+					// A retry of a create that already landed, or a page that came back: just merge.
+					const existing = this.byId(id);
+					if (existing) return this.applyUpdate(existing, state, by);
+					const restored = this.restore(id, state, by);
+					if (restored) return restored;
+					const key = normalizePath(path);
+					checkMarkdown(key);
+					const target = this.freePath(this.inExistingFolders(key));
+					this.checkCanCreate(target);
+					return this.create(target, '', by, { id, state });
+				});
+				return [{ seq: this.currentSeq(), path: page.path }];
+			}
+			case 'move': {
+				const id = pageId();
+				const path = str('path');
+				const page = this.commit(() => {
+					const existing = this.byId(id);
+					if (!existing) throw new SyncError('unknown', 'No such page.');
+					const key = normalizePath(path);
+					checkMarkdown(key);
+					const clash = this.find(key);
+					// Last rename wins; onto another page's path, it becomes "name 2.md".
+					const target = clash?.id === id ? key : this.freePath(this.inExistingFolders(key), id);
+					return target === existing.path ? existing : this.relocate(existing, target, by);
+				});
+				return [{ seq: this.currentSeq(), path: page.path }];
+			}
+			case 'moveFolder': {
+				const from = str('from');
+				const to = str('to');
+				this.commit(() => this.moveFolderInside(from, to, by, true));
+				return [{ seq: this.currentSeq() }];
+			}
+			case 'delete': {
+				const id = pageId();
+				const seen = payload();
+				this.commit(() => {
+					const page = this.byId(id);
+					if (!page) return; // Already gone: deleting twice is fine.
+					if (this.hasUnseen(id, seen)) throw new SyncError('changed', 'This page has edits you never saw, so it was kept.');
+					this.trashPage(page, by);
+				});
+				return [{ seq: this.currentSeq() }];
+			}
+			default:
+				throw new SyncError('bad-request', 'Unknown request.');
+		}
+	}
+
+	/** Answers a pull: for each page, the edits missing from the state vector the device sent. */
+	private pull(ids: unknown, vectors: Uint8Array[]): [Record<string, unknown>, Uint8Array[]] {
+		if (!Array.isArray(ids) || ids.length > MAX_PULL || !ids.every((id) => typeof id === 'string' && PAGE_ID.test(id))) {
+			throw new SyncError('bad-request', `"ids" must list up to ${MAX_PULL} page ids.`);
+		}
+		if (vectors.length !== ids.length) throw new SyncError('bad-request', 'Send one state vector per id.');
+		const pages: PulledPage[] = [];
+		const updates: Uint8Array[] = [];
+		let bytes = 0;
+		ids.forEach((id: string, i) => {
+			const row = this.sql.exec<{ path: string; seq: number }>(`SELECT path, seq FROM pages WHERE id = ?`, id).toArray()[0];
+			if (!row) return pages.push({ id, missing: true });
+			if (bytes > PULL_BYTES) return pages.push({ id, later: true });
+			let update: Uint8Array;
+			try {
+				update = vectors[i].length ? Y.encodeStateAsUpdate(this.loadDoc(id), vectors[i]) : Y.encodeStateAsUpdate(this.loadDoc(id));
+			} catch {
+				throw new SyncError('bad-request', `The state vector for ${id} is malformed.`);
+			}
+			bytes += update.length;
+			pages.push({ id, path: row.path, seq: row.seq, update: updates.length });
+			updates.push(update);
+		});
+		return [{ pages }, updates];
+	}
+
+	/** True if the page holds edits beyond the state vector `seen` (a device's view of it). */
+	private hasUnseen(id: string, seen: Uint8Array): boolean {
+		let device: Map<number, number>;
+		try {
+			device = Y.decodeStateVector(seen);
+		} catch {
+			throw new SyncError('bad-request', 'That state vector is malformed.');
+		}
+		const server = Y.decodeStateVector(Y.encodeStateVector(this.loadDoc(id)));
+		for (const [client, clock] of server) if ((device.get(client) ?? 0) < clock) return true;
+		return false;
+	}
+
+	private byId(id: string): Page | null {
+		const row = this.sql.exec<PageRow>(`SELECT id, path, content, etag, updated_at FROM pages WHERE id = ?`, id).toArray()[0];
+		return row ? this.toPage(row) : null;
+	}
+
+	/** Runs a write in a transaction, then tells connected devices what changed. */
+	private commit<T>(fn: () => T): T {
+		this.outbox = [];
+		try {
+			const result = this.ctx.storage.transactionSync(fn);
+			for (const ws of this.ctx.getWebSockets()) {
+				if (ws === this.origin) continue;
+				for (const frame of this.outbox) {
+					try {
+						ws.send(frame);
+					} catch {
+						// A socket closing mid-send catches up with `changes` when it reconnects.
+					}
+				}
+			}
+			return result;
+		} finally {
+			this.outbox = [];
+		}
+	}
+
+	/** Queues a message for the other devices (only if any are connected). */
+	private emit(message: Reply, payloads: Uint8Array[] = []): void {
+		if (this.ctx.getWebSockets().length) this.outbox.push(encodeFrame(message, payloads));
 	}
 
 	/** New pages must be markdown, and the vault must have room. */
@@ -469,6 +793,11 @@ export class Vault extends DurableObject<Env> {
 		return path;
 	}
 
+	/** The last change number given out, 0 before the first change. */
+	private currentSeq(): number {
+		return this.sql.exec<{ value: number }>(`SELECT value FROM meta WHERE key = 'seq'`).toArray()[0]?.value ?? 0;
+	}
+
 	/** The next change number. Never reused, even after the page that had it is gone. */
 	private nextSeq(): number {
 		return this.sql
@@ -478,10 +807,17 @@ export class Vault extends DurableObject<Env> {
 			.one().value;
 	}
 
-	private create(path: string, text: string, by: Author): Page {
-		const id = `p_${crypto.randomUUID()}`;
+	/** Creates a page from text (MCP), or from a device's Yjs state under the device's id (sync). */
+	private create(path: string, text: string, by: Author, from?: { id: string; state: Uint8Array }): Page {
+		const id = from?.id ?? `p_${crypto.randomUUID()}`;
 		const doc = this.newDoc();
-		doc.getText(TEXT).insert(0, text);
+		if (from) {
+			this.applyTo(doc, from.state);
+			text = doc.getText(TEXT).toString();
+			checkSize(text);
+		} else {
+			doc.getText(TEXT).insert(0, text);
+		}
 		this.saveDoc(id, doc);
 		const page: Page = { id, path, content: text, etag: crypto.randomUUID(), updatedAt: Date.now() };
 		this.sql.exec(
@@ -496,6 +832,7 @@ export class Vault extends DurableObject<Env> {
 		);
 		this.sql.exec(`INSERT INTO pages_fts (path, content) VALUES (?, ?)`, path, text);
 		this.record(id, 'create', path, null, by);
+		this.emit({ t: 'page', id, path, seq: this.currentSeq() }, [Y.encodeStateAsUpdate(doc)]);
 		return page;
 	}
 
@@ -503,10 +840,26 @@ export class Vault extends DurableObject<Env> {
 	private change(page: Page, list: Splice[], by: Author): Page {
 		if (!list.length) return page;
 		const doc = this.loadDoc(page.id);
-		const text = doc.getText(TEXT);
-		doc.transact(() => applySplices(text, list));
+		const before = Y.encodeStateVector(doc);
+		doc.transact(() => applySplices(doc.getText(TEXT), list));
+		return this.store(page, doc, before, by);
+	}
+
+	/** Applies a device's Yjs update to a page. */
+	private applyUpdate(page: Page, update: Uint8Array, by: Author): Page {
+		const doc = this.loadDoc(page.id);
+		const before = Y.encodeStateVector(doc);
+		this.applyTo(doc, update);
+		return this.store(page, doc, before, by);
+	}
+
+	/** Saves an edited Yjs document and the text it now reads, and tells other devices. */
+	private store(page: Page, doc: Y.Doc, before: Uint8Array, by: Author): Page {
+		const content = doc.getText(TEXT).toString();
+		checkSize(content);
+		const grew = !sameBytes(before, Y.encodeStateVector(doc));
 		this.saveDoc(page.id, doc);
-		const content = text.toString();
+		if (content === page.content && !grew) return page;
 		const changed: Page = { ...page, content, etag: crypto.randomUUID(), updatedAt: Date.now() };
 		this.sql.exec(
 			`UPDATE pages SET content = ?, etag = ?, updated_at = ?, seq = ? WHERE id = ?`,
@@ -519,7 +872,53 @@ export class Vault extends DurableObject<Env> {
 		this.sql.exec(`DELETE FROM pages_fts WHERE path = ?`, page.path);
 		this.sql.exec(`INSERT INTO pages_fts (path, content) VALUES (?, ?)`, page.path, content);
 		this.record(page.id, 'edit', page.path, null, by);
+		this.emit({ t: 'page', id: page.id, path: page.path, seq: this.currentSeq() }, [Y.encodeStateAsUpdate(doc, before)]);
 		return changed;
+	}
+
+	/**
+	 * Brings a trashed page back because a device edited it: an edit beats a delete. It returns
+	 * to its old path, or "name 2.md" if that's been taken since.
+	 */
+	private restore(id: string, update: Uint8Array, by: Author): Page | null {
+		const trashed = this.sql
+			.exec<{ path: string }>(`SELECT path FROM trash WHERE page_id = ? ORDER BY id DESC LIMIT 1`, id)
+			.toArray()[0];
+		if (!trashed || !this.hasDoc(id)) return null;
+		const path = this.freePath(this.inExistingFolders(trashed.path));
+		this.checkCanCreate(path);
+		const doc = this.loadDoc(id);
+		this.applyTo(doc, update);
+		const content = doc.getText(TEXT).toString();
+		checkSize(content);
+		this.saveDoc(id, doc);
+		const page: Page = { id, path, content, etag: crypto.randomUUID(), updatedAt: Date.now() };
+		this.sql.exec(
+			`INSERT INTO pages (id, path, fold, content, etag, updated_at, seq) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			id,
+			path,
+			foldPath(path),
+			content,
+			page.etag,
+			page.updatedAt,
+			this.nextSeq()
+		);
+		this.sql.exec(`INSERT INTO pages_fts (path, content) VALUES (?, ?)`, path, content);
+		this.sql.exec(`DELETE FROM trash WHERE page_id = ?`, id);
+		this.sql.exec(`DELETE FROM deleted WHERE id = ?`, id);
+		this.record(id, 'restore', path, null, by);
+		this.emit({ t: 'page', id, path, seq: this.currentSeq() }, [Y.encodeStateAsUpdate(doc)]);
+		return page;
+	}
+
+	/** `path` if it's free (or already this page's), otherwise the first free "name n.md". */
+	private freePath(path: string, self?: string): string {
+		let candidate = path;
+		for (let n = 2; ; n++) {
+			const clash = this.find(candidate);
+			if (!clash || clash.id === self) return candidate;
+			candidate = numbered(path, n);
+		}
 	}
 
 	private relocate(page: Page, path: string, by: Author): Page {
@@ -534,6 +933,7 @@ export class Vault extends DurableObject<Env> {
 		);
 		this.sql.exec(`UPDATE pages_fts SET path = ? WHERE path = ?`, path, page.path);
 		this.record(page.id, 'move', path, page.path, by);
+		this.emit({ t: 'page', id: page.id, path, seq: this.currentSeq() });
 		return moved;
 	}
 
@@ -586,12 +986,39 @@ export class Vault extends DurableObject<Env> {
 		return doc;
 	}
 
+	private hasDoc(pageId: string): boolean {
+		return this.sql.exec(`SELECT 1 FROM ystate WHERE page_id = ? LIMIT 1`, pageId).toArray().length > 0;
+	}
+
+	/** Applies a Yjs update from a device, refusing malformed ones. */
+	private applyTo(doc: Y.Doc, update: Uint8Array): void {
+		try {
+			Y.applyUpdate(doc, update);
+		} catch {
+			throw new SyncError('bad-request', 'That Yjs update is malformed.');
+		}
+	}
+
 	private saveDoc(pageId: string, doc: Y.Doc): void {
 		const state = Y.encodeStateAsUpdate(doc);
+		if (state.length > MAX_STATE_BYTES) throw new VaultError('This page has grown too large to store.');
 		this.sql.exec(`DELETE FROM ystate WHERE page_id = ?`, pageId);
 		for (let part = 0; part * PART_BYTES < state.length || part === 0; part++) {
 			const chunk = state.slice(part * PART_BYTES, (part + 1) * PART_BYTES);
 			this.sql.exec(`INSERT INTO ystate (page_id, part, data) VALUES (?, ?, ?)`, pageId, part, chunk.buffer);
 		}
 	}
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+	return a.length === b.length && a.every((byte, i) => byte === b[i]);
+}
+
+function base64url(bytes: Uint8Array): string {
+	return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function sha256(text: string): Promise<string> {
+	const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
+	return [...digest].map((b) => b.toString(16).padStart(2, '0')).join('');
 }

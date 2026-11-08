@@ -4,13 +4,13 @@ import { defineConfig } from 'vite';
 
 // Locally, mirror production's single origin: these paths belong to apps/server (wrangler dev on :8787).
 const server = 'http://localhost:8787';
-const serverPaths = ['/mcp', '/authorize', '/oauth', '/.well-known/oauth-authorization-server', '/.well-known/oauth-protected-resource'];
+const serverPaths = ['/mcp', '/authorize', '/oauth', '/sync', '/.well-known/oauth-authorization-server', '/.well-known/oauth-protected-resource'];
 
 export default defineConfig({
 	server: {
 		port: 5173,
 		strictPort: true,
-		proxy: Object.fromEntries(serverPaths.map((path) => [path, { target: server, changeOrigin: false }]))
+		proxy: Object.fromEntries(serverPaths.map((path) => [path, { target: server, changeOrigin: false, ws: path === '/sync' }]))
 	},
 	plugins: [
 		sveltekit({
