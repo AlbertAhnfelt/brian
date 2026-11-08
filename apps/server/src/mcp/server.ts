@@ -27,7 +27,8 @@ export async function createServer(): Promise<McpServer> {
 	const props = getMcpAuthContext()?.props as Props | undefined;
 	if (!props) return new McpServer({ name: 'brian', version: '0.0.1' });
 
-	const vault = await Brian.load(env, props.userId);
+	// What the user connected through, as the app registered itself ("Claude"), for page history.
+	const vault = await Brian.load(env, props.userId, props.client || 'MCP');
 	const server = new McpServer({ name: 'brian', version: '0.0.1' }, { instructions: instructions(vault) });
 
 	server.registerTool(
@@ -118,11 +119,17 @@ export async function createServer(): Promise<McpServer> {
 	server.registerTool(
 		'move_page',
 		{
-			description: 'Move or rename a page, also between brians. The new path must end in .md. Fails if the destination already exists.',
+			description:
+				'Move or rename a page, also between brians. The new path must end in .md. Fails if the destination already exists. To move or rename a whole folder within one brian, end both paths with "/" (e.g. "notes/old/" → "notes/new/").',
 			inputSchema: z.object({ from: z.string().min(1), to: z.string().min(1) })
 		},
 		({ from, to }) =>
 			run(async () => {
+				if (from.trim().endsWith('/') || to.trim().endsWith('/')) {
+					if (!from.trim().endsWith('/') || !to.trim().endsWith('/')) throw new Error('To move a folder, end both paths with "/".');
+					const moved = await vault.moveFolder(from, to);
+					return `Moved ${moved.length} page${moved.length === 1 ? '' : 's'} to ${to}`;
+				}
 				const page = await vault.move(from, to);
 				return `Moved to ${page.path}`;
 			})

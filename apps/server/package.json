@@ -23,9 +23,11 @@
 	},
 	"dependencies": {
 		"@brian/shared": "workspace:*",
+		"@brian/sync": "workspace:*",
 		"@cloudflare/workers-oauth-provider": "^1.2.4",
 		"@modelcontextprotocol/server": "2.4.0",
 		"agents": "^0.32.0",
+		"yjs": "13.6.33",
 		"zod": "^4.6.7"
 	}
 }

@@ -93,6 +93,21 @@ describe('MCP', () => {
 		expect((await tool(bob, 'search', { query: 'secret' })).text).toBe('No matches.');
 	});
 
+	it('records the app in page history, and moves whole folders', async () => {
+		const { user, jar } = await signedInUser('history@example.com');
+		const token = await connect(jar);
+		await tool(token, 'write_page', { path: 'old/a.md', content: 'one' });
+		await tool(token, 'edit_page', { path: 'old/a.md', old_string: 'one', new_string: 'two' });
+		expect((await tool(token, 'move_page', { from: 'old/', to: 'new' })).isError).toBe(true);
+		expect((await tool(token, 'move_page', { from: 'old/', to: 'new/' })).text).toBe('Moved 1 page to new/');
+		const history = await env.VAULT.getByName(user.id).history('new/a.md');
+		expect(history.map((h) => [h.action, h.user, h.source])).toEqual([
+			['move', user.id, 'Test client'],
+			['edit', user.id, 'Test client'],
+			['create', user.id, 'Test client']
+		]);
+	});
+
 	it('turns vault failures into readable tool errors', async () => {
 		const token = await connect((await signedInUser('errors@example.com')).jar);
 		const result = await tool(token, 'write_page', { path: '../escape.md', content: 'x' });

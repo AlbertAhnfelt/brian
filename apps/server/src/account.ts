@@ -3,7 +3,7 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import { oauthOptions } from './oauth';
 import type { AccountRpc, BrianSummary, BrianView, Connection, Outcome, Role, Visibility } from '@brian/shared';
 import * as members from './brian/members';
-import type { Page } from './vault/vault';
+import type { ExportedPage } from './vault/vault';
 
 /**
  * Account management for the website, over a service binding. Not reachable from the internet:
@@ -27,7 +27,7 @@ export class Account extends WorkerEntrypoint<Env> implements AccountRpc {
 	}
 
 	/** The personal brian, plus every shared brian the user is in, under brian/<mount>/. */
-	async exportPages(userId: string): Promise<Page[]> {
+	async exportPages(userId: string): Promise<ExportedPage[]> {
 		const pages = await this.env.VAULT.getByName(userId).exportAll();
 		for (const brian of await members.membershipsOf(this.env.DB, userId)) {
 			const shared = await this.env.VAULT.getByName(brian.id).exportAll();

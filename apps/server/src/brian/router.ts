@@ -1,6 +1,6 @@
 import type { BrianSummary } from '@brian/shared';
 import { foldPath, normalizePath, normalizePrefix, VaultError } from '../vault/paths';
-import type { Listing, Page, SearchHit, Vault } from '../vault/vault';
+import type { Author, Listing, Page, SearchHit, Vault } from '../vault/vault';
 import { membershipsOf, type Bindings } from './members';
 
 /** Where a path lives: which brian's vault, under what path there. */
@@ -26,15 +26,17 @@ export class Brian {
 		private env: Bindings,
 		private userId: string,
 		readonly username: string | null,
-		readonly brians: BrianSummary[]
+		readonly brians: BrianSummary[],
+		private source: string
 	) {}
 
-	static async load(env: Bindings, userId: string): Promise<Brian> {
+	/** `source` names what the user is working through ("Claude", "Obsidian"), for page history. */
+	static async load(env: Bindings, userId: string, source: string): Promise<Brian> {
 		const [username, brians] = await Promise.all([
 			env.DB.prepare('SELECT username FROM users WHERE id = ?').bind(userId).first<string>('username'),
 			membershipsOf(env.DB, userId)
 		]);
-		return new Brian(env, userId, username, brians);
+		return new Brian(env, userId, username, brians, source);
 	}
 
 	async list(prefix = ''): Promise<Listing> {
@@ -74,17 +76,34 @@ export class Brian {
 
 	async write(path: string, content: string, expectedEtag?: string): Promise<Page> {
 		const target = this.writable(this.route(path));
-		return this.shown(target, await target.vault.write(target.inner, content, expectedEtag));
+		return this.shown(target, await target.vault.write(target.inner, content, expectedEtag, this.by));
 	}
 
 	async edit(path: string, oldString: string, newString: string, replaceAll = false): Promise<Page> {
 		const target = this.writable(this.route(path));
-		return this.shown(target, await target.vault.edit(target.inner, oldString, newString, replaceAll));
+		return this.shown(target, await target.vault.edit(target.inner, oldString, newString, replaceAll, this.by));
 	}
 
 	async delete(path: string): Promise<void> {
 		const target = this.writable(this.route(path));
-		await target.vault.delete(target.inner);
+		await target.vault.delete(target.inner, this.by);
+	}
+
+	/** Moves a folder and everything in it, within one brian, as one change. */
+	async moveFolder(from: string, to: string): Promise<string[]> {
+		const source = this.writable(this.route(`${normalizePrefix(from)}x`));
+		const target = this.writable(this.route(`${normalizePrefix(to)}x`));
+		if (source.brian?.id !== target.brian?.id) {
+			throw new VaultError('A folder can only move within one brian. Move its pages one by one instead.');
+		}
+		for (const folder of [source, target]) {
+			const shown = folder.outer + folder.inner.slice(0, -1);
+			if (foldPath(shown) === 'brian/' || foldPath(shown) === `brian/${this.username}/`) {
+				throw new VaultError(`${shown} is part of how Brian is laid out, so it can't be moved.`);
+			}
+		}
+		const moved = await target.vault.moveFolder(source.inner.slice(0, -1), target.inner.slice(0, -1), this.by);
+		return moved.map((path) => target.outer + path);
 	}
 
 	/** Within one brian this is atomic. Between brians it's a copy and a delete. */
@@ -92,17 +111,21 @@ export class Brian {
 		const source = this.writable(this.route(from));
 		const target = this.writable(this.route(to));
 		if (source.brian?.id === target.brian?.id) {
-			return this.shown(target, await target.vault.move(source.inner, target.inner));
+			return this.shown(target, await target.vault.move(source.inner, target.inner, this.by));
 		}
 		const page = await source.vault.read(source.inner);
-		const moved = await target.vault.write(target.inner, page.content);
+		const moved = await target.vault.write(target.inner, page.content, undefined, this.by);
 		try {
-			await source.vault.delete(source.inner);
+			await source.vault.delete(source.inner, this.by);
 		} catch (error) {
 			const shownFrom = source.outer + source.inner;
 			throw new VaultError(`Copied to ${target.outer + target.inner}, but couldn't remove ${shownFrom}: ${(error as Error).message}`);
 		}
 		return this.shown(target, moved);
+	}
+
+	private get by(): Author {
+		return { user: this.userId, source: this.source };
 	}
 
 	private route(path: string): Target {

@@ -67,7 +67,9 @@ async function submitConsent(request: Request, env: Env, user: User): Promise<Re
 	}
 
 	const approved = await oauth.approveConsent(request, handle, { scope: [SCOPE] });
-	const props: Props = { userId: user.id, email: user.email };
+	const app = await oauth.lookupClient(approved.request.clientId);
+	const client = (app?.clientName ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 64) || undefined;
+	const props: Props = { userId: user.id, email: user.email, client };
 	const { redirectTo } = await oauth.completeAuthorization({
 		request: approved.request,
 		userId: user.id,

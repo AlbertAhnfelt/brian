@@ -1,9 +1,44 @@
 import { runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
+import * as Y from 'yjs';
 import { failure } from './helpers';
 
 const vault = (name = crypto.randomUUID()) => env.VAULT.getByName(name);
+const human = { user: 'u_1', source: 'Obsidian' };
+const agent = { user: 'u_1', source: 'Claude' };
+
+/** Turns `v` into a vault of the first schema (pages keyed by path, no Yjs) holding `pages`, then upgrades it. */
+async function legacy(v: ReturnType<typeof vault>, pages: [string, string][], trash: [string, string][] = []) {
+	await runInDurableObject(v, (instance, state) => {
+		const sql = state.storage.sql;
+		for (const table of ['pages', 'ystate', 'deleted', 'history', 'trash', 'pages_fts', 'meta']) sql.exec(`DROP TABLE IF EXISTS ${table}`);
+		sql.exec(`
+			CREATE TABLE pages (path TEXT PRIMARY KEY, content TEXT NOT NULL, etag TEXT NOT NULL, updated_at INTEGER NOT NULL, seq INTEGER NOT NULL DEFAULT 0);
+			CREATE TABLE deleted (path TEXT PRIMARY KEY, seq INTEGER NOT NULL, deleted_at INTEGER NOT NULL);
+			CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+			CREATE TABLE trash (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL, content TEXT NOT NULL, deleted_at INTEGER NOT NULL);
+			CREATE VIRTUAL TABLE pages_fts USING fts5(path, content, tokenize = 'porter unicode61');
+		`);
+		sql.exec(`INSERT INTO meta (key, value) VALUES ('seq', ?)`, pages.length);
+		for (const [path, content] of pages) sql.exec(`INSERT INTO pages (path, content, etag, updated_at) VALUES (?, ?, 'e', 0)`, path, content);
+		for (const [path, content] of trash) sql.exec(`INSERT INTO trash (path, content, deleted_at) VALUES (?, ?, ?)`, path, content, Date.now());
+		(instance as unknown as { migrate(): void }).migrate();
+	});
+}
+
+/** The text of a page's stored Yjs document, which must always equal its markdown. */
+async function yText(v: ReturnType<typeof vault>, id: string): Promise<string> {
+	return runInDurableObject(v, (_, state) => {
+		const parts = state.storage.sql
+			.exec<{ data: ArrayBuffer }>(`SELECT data FROM ystate WHERE page_id = ? ORDER BY part`, id)
+			.toArray()
+			.map((r) => new Uint8Array(r.data));
+		const doc = new Y.Doc();
+		Y.applyUpdate(doc, Uint8Array.from(parts.flatMap((p) => [...p])));
+		return doc.getText('content').toString();
+	});
+}
 
 describe('Vault', () => {
 	it('creates, reads and refuses to create twice', async () => {
@@ -150,10 +185,8 @@ describe('Vault hardening', () => {
 
 	it('still reads, edits and deletes older non-markdown pages', async () => {
 		const v = vault();
-		await runInDurableObject(v, (_, state) => {
-			state.storage.sql.exec(`INSERT INTO pages (path, fold, content, etag, updated_at) VALUES ('old.txt', 'old.txt', 'hi', 'e1', 0)`);
-		});
-		await v.write('old.txt', 'hello', 'e1');
+		await legacy(v, [['old.txt', 'hi']]);
+		await v.write('old.txt', 'hello', (await v.read('old.txt')).etag);
 		await v.edit('old.txt', 'hello', 'hey');
 		expect((await v.read('old.txt')).content).toBe('hey');
 		await v.delete('old.txt');
@@ -165,7 +198,7 @@ describe('Vault hardening', () => {
 		await runInDurableObject(v, (_, state) => {
 			state.storage.sql.exec(
 				`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 9999)
-				 INSERT INTO pages (path, fold, content, etag, updated_at) SELECT 'p' || i || '.md', 'p' || i || '.md', '', 'e', 0 FROM n`
+				 INSERT INTO pages (id, path, fold, content, etag, updated_at, seq) SELECT 'x' || i, 'p' || i || '.md', 'p' || i || '.md', '', 'e', 0, 0 FROM n`
 			);
 		});
 		expect(await failure(v.write('b.md', 'two'))).toMatch(/full \(10,000 pages\)/);
@@ -185,15 +218,15 @@ describe('change feed', () => {
 		await v.move('b.md', 'c.md');
 		await v.delete('a.md');
 		const { changes, cursor, more } = await v.changes(0);
+		// A move is a change to the same page (same id), not a delete plus a create.
 		expect(changes.map((c) => [c.path, c.deleted])).toEqual([
-			['b.md', true],
 			['c.md', false],
 			['a.md', true]
 		]);
-		expect(changes.map((c) => c.seq)).toEqual([4, 5, 6]);
-		expect(cursor).toBe(6);
+		expect(changes.map((c) => c.seq)).toEqual([4, 5]);
+		expect(changes[1].id).toBe(a.id);
+		expect(cursor).toBe(5);
 		expect(more).toBe(false);
-		expect(a.etag).not.toBe((changes[1] as { etag: string }).etag);
 	});
 
 	it('continues from a cursor, a page at a time', async () => {
@@ -208,29 +241,16 @@ describe('change feed', () => {
 		expect((await v.changes(rest.cursor)).changes).toEqual([]);
 	});
 
-	it('forgets the delete when a path is written again', async () => {
+	it('treats a page written again at a deleted path as a new page', async () => {
 		const v = vault();
-		await v.write('a.md', 'one');
+		const old = await v.write('a.md', 'one');
 		await v.delete('a.md');
-		await v.write('a.md', 'again');
-		expect((await v.changes(0)).changes).toMatchObject([{ path: 'a.md', deleted: false, seq: 3 }]);
-	});
-
-	it('numbers the pages of a vault created before the feed existed', async () => {
-		const v = vault();
-		await v.write('a.md', 'one');
-		await v.write('b.md', 'two');
-		await runInDurableObject(v, (instance, state) => {
-			const sql = state.storage.sql;
-			sql.exec(`DROP INDEX pages_seq`);
-			sql.exec(`ALTER TABLE pages DROP COLUMN seq`);
-			sql.exec(`DELETE FROM meta`);
-			(instance as unknown as { migrate(): void }).migrate();
-		});
-		const { changes, cursor } = await v.changes(0);
-		expect(changes.map((c) => c.path)).toEqual(['a.md', 'b.md']);
-		await v.write('c.md', 'three');
-		expect((await v.changes(cursor)).changes).toMatchObject([{ path: 'c.md', seq: cursor + 1 }]);
+		const again = await v.write('a.md', 'again');
+		expect(again.id).not.toBe(old.id);
+		expect((await v.changes(0)).changes).toMatchObject([
+			{ id: old.id, path: 'a.md', deleted: true, seq: 2 },
+			{ id: again.id, path: 'a.md', deleted: false, seq: 3 }
+		]);
 	});
 
 	it('scores search hits so results from several brians can be merged', async () => {
@@ -277,24 +297,25 @@ describe('case-insensitive paths', () => {
 		expect((await v.read('a.md')).content).toBe('uno\ndos\n');
 	});
 
-	it('repairs a vault stored under the old rules, without losing a page', async () => {
+});
+
+describe('upgrading a vault of the first schema', () => {
+	it('gives every page an id and a Yjs document, repairs paths, and loses nothing', async () => {
 		const v = vault();
-		await v.write('keep.md', 'keep');
-		await runInDurableObject(v, (instance, state) => {
-			const sql = state.storage.sql;
-			sql.exec(`DROP INDEX pages_fold`);
-			sql.exec(`ALTER TABLE pages DROP COLUMN fold`);
-			const add = (path: string, content: string) =>
-				sql.exec(`INSERT INTO pages (path, content, etag, updated_at, seq) VALUES (?, ?, 'e', 0, 0)`, path, content);
-			add('Notes/a.md', 'a');
-			add('notes/b.md', 'b');
-			add('Keep.md', 'second keep');
-			add('a:b.md', 'colon');
-			add('a-b.md', 'dash');
-			add('crlf.md', 'x\r\ny');
-			(instance as unknown as { migrate(): void }).migrate();
-		});
-		const all = Object.fromEntries((await v.exportAll()).map((p) => [p.path, p.content]));
+		await legacy(
+			v,
+			[
+				['keep.md', 'keep'],
+				['Notes/a.md', 'a'],
+				['notes/b.md', 'b'],
+				['Keep.md', 'second keep'],
+				['a:b.md', 'colon'],
+				['a-b.md', 'dash'],
+				['crlf.md', 'x\r\ny']
+			],
+			[['gone.md', 'bye']]
+		);
+		const all = Object.fromEntries((await v.exportAll()).filter((p) => !p.path.startsWith('.trash/')).map((p) => [p.path, p.content]));
 		expect(all).toEqual({
 			'keep.md': 'keep',
 			'Notes/a.md': 'a',
@@ -304,7 +325,102 @@ describe('case-insensitive paths', () => {
 			'a-b.md': 'dash',
 			'crlf.md': 'x\ny'
 		});
+		expect((await v.exportAll()).filter((p) => p.path.startsWith('.trash/')).map((p) => p.content)).toEqual(['bye']);
+		const { changes } = await v.changes(0);
+		expect(changes).toHaveLength(7);
+		expect(changes.every((c) => !c.deleted && c.id.startsWith('p_'))).toBe(true);
+		const page = await v.edit('a-b 2.md', 'colon', 'semicolon');
+		expect(await yText(v, page.id)).toBe('semicolon');
 		expect(await failure(v.write('KEEP.md', 'x'))).toMatch(/already exists/);
-		expect((await v.changes(0)).changes.filter((c) => c.deleted).map((c) => c.path).sort()).toEqual(['Keep.md', 'a:b.md', 'notes/b.md']);
+	});
+});
+
+describe('Yjs documents', () => {
+	it('always read the same as the markdown, emoji and all', async () => {
+		const v = vault();
+		const page = await v.write('a.md', 'hi 😀 there');
+		await v.edit('a.md', '😀', '😁');
+		await v.write('a.md', 'hello 😁 there, 🎉', (await v.read('a.md')).etag);
+		await v.edit('a.md', 'there', 'world', true);
+		expect((await v.read('a.md')).content).toBe('hello 😁 world, 🎉');
+		expect(await yText(v, page.id)).toBe('hello 😁 world, 🎉');
+	});
+
+	it('store pages near the size limit in several parts', async () => {
+		const v = vault();
+		const page = await v.write('big.md', `START${'ab'.repeat(500_000)}`);
+		await v.edit('big.md', 'START', 'X');
+		const text = (await v.read('big.md')).content;
+		expect(text.startsWith('Xab')).toBe(true);
+		expect(await yText(v, page.id)).toBe(text);
+		const parts = await runInDurableObject(v, (_, s) => s.storage.sql.exec(`SELECT COUNT(*) AS n FROM ystate WHERE page_id = ?`, page.id).one().n);
+		expect(parts).toBeGreaterThan(1);
+	});
+
+	it("keep a trashed page's document until the trash is emptied", async () => {
+		const v = vault();
+		const page = await v.write('a.md', 'x');
+		await v.delete('a.md');
+		const count = () => runInDurableObject(v, (_, s) => s.storage.sql.exec(`SELECT COUNT(*) AS n FROM ystate WHERE page_id = ?`, page.id).one().n);
+		expect(await count()).toBe(1);
+		await runInDurableObject(v, (_, s) => s.storage.sql.exec(`UPDATE trash SET deleted_at = 0`));
+		await v.write('b.md', 'y');
+		await v.delete('b.md');
+		expect(await count()).toBe(0);
+	});
+});
+
+describe('page history', () => {
+	it('records who did what, keeping the id through renames', async () => {
+		const v = vault();
+		const page = await v.write('a.md', 'one', undefined, human);
+		await v.edit('a.md', 'one', 'two', false, agent);
+		const moved = await v.move('a.md', 'b.md', human);
+		expect(moved.id).toBe(page.id);
+		expect((await v.history('b.md')).map((h) => [h.action, h.path, h.fromPath, h.source])).toEqual([
+			['move', 'b.md', 'a.md', 'Obsidian'],
+			['edit', 'a.md', null, 'Claude'],
+			['create', 'a.md', null, 'Obsidian']
+		]);
+	});
+
+	it('folds a run of edits by one author into one entry', async () => {
+		const v = vault();
+		await v.write('a.md', '1', undefined, human);
+		for (const n of ['2', '3', '4']) await v.write('a.md', n, (await v.read('a.md')).etag, human);
+		await v.edit('a.md', '4', '5', false, agent);
+		await v.edit('a.md', '5', '6', false, human);
+		expect((await v.history('a.md')).map((h) => `${h.action}:${h.source}`)).toEqual(['edit:Obsidian', 'edit:Claude', 'edit:Obsidian', 'create:Obsidian']);
+	});
+});
+
+describe('folder moves', () => {
+	it('moves everything in a folder as one change, keeping ids', async () => {
+		const v = vault();
+		const a = await v.write('old/a.md', 'a');
+		await v.write('old/deep/b.md', 'b');
+		await v.write('other.md', 'o');
+		expect((await v.moveFolder('old', 'new/place')).sort()).toEqual(['new/place/a.md', 'new/place/deep/b.md']);
+		expect((await v.read('new/place/a.md')).id).toBe(a.id);
+		expect(await v.list('')).toEqual({ folders: ['new/'], files: ['other.md'] });
+	});
+
+	it('changes the case of a folder', async () => {
+		const v = vault();
+		await v.write('notes/a.md', 'a');
+		expect(await v.moveFolder('notes/', 'Notes/')).toEqual(['Notes/a.md']);
+	});
+
+	it('joins the casing of a folder that exists, and refuses clashes and moves into itself', async () => {
+		const v = vault();
+		await v.write('src/a.md', 'a');
+		await v.write('src/b.md', 'b');
+		await v.write('Dest/b.md', 'existing');
+		expect(await failure(v.moveFolder('src', 'dest'))).toMatch(/"Dest\/b.md" already exists/);
+		expect(await failure(v.moveFolder('src', 'src/inner'))).toMatch(/into itself/);
+		expect(await failure(v.moveFolder('nothing', 'x'))).toMatch(/No folder/);
+		await v.delete('Dest/b.md');
+		await v.write('Dest/c.md', 'c');
+		expect((await v.moveFolder('src', 'dest')).sort()).toEqual(['Dest/a.md', 'Dest/b.md']);
 	});
 });
