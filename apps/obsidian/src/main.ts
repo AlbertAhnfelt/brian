@@ -684,7 +684,7 @@ class BrianSettingTab extends PluginSettingTab {
 
 		const problems = plugin.problems();
 		if (problems.length) {
-			containerEl.createEl('h3', { text: 'Not syncing' });
+			new Setting(containerEl).setName('Not syncing').setHeading();
 			for (const { path, message } of problems) {
 				const setting = new Setting(containerEl).setName(path).setDesc(message);
 				const fix = plugin.betterName(path);
@@ -699,7 +699,7 @@ class BrianSettingTab extends PluginSettingTab {
 			}
 		}
 
-		containerEl.createEl('h3', { text: 'Good to know' });
+		new Setting(containerEl).setName('Good to know').setHeading();
 		const notes = containerEl.createEl('ul');
 		notes.createEl('li', { text: 'Brian syncs markdown notes only, not images or other attachments.' });
 		notes.createEl('li', { text: 'Brian must be the only thing syncing this vault: turn off Obsidian Sync, iCloud, Git and Remotely Save.' });

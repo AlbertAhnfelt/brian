@@ -31,3 +31,7 @@ apps/obsidian/data.json
 
 # OS / editor
 .DS_Store
+
+# Editor and AI tool configs (local to each developer)
+.cursor/
+.github/instructions/

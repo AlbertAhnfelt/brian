@@ -56,7 +56,7 @@ export class VaultFiles implements LocalFiles {
 	async write(path: string, text: string): Promise<void> {
 		const file = this.file(path);
 		if (file) {
-			await this.app.vault.modify(file, text);
+			await this.app.vault.process(file, () => text);
 		} else {
 			await this.folders(this.full(path));
 			await this.app.vault.create(this.full(path), text);
@@ -74,8 +74,8 @@ export class VaultFiles implements LocalFiles {
 
 	async remove(path: string): Promise<void> {
 		const file = this.file(path);
-		// Into the vault's own .trash: when unsure, keep.
-		if (file) await this.app.vault.trash(file, false);
+		// To the trash the user picked in Obsidian's settings (system or vault .trash): when unsure, keep.
+		if (file) await this.app.fileManager.trashFile(file);
 	}
 
 	busy(path: string): boolean {
