@@ -222,7 +222,8 @@ export async function leave(env: Bindings, userId: string, brianId: string): Pro
 
 /**
  * Renames the folder a shared brian appears under in this user's own Brian (brian/<mount>/), as
- * when they rename it in Obsidian. Only their own membership changes; nobody else's folder does.
+ * when they rename it in Obsidian. Only their own folder changes, nobody else's. When the owner
+ * renames it, the brian's name follows.
  */
 export async function setMount(env: Bindings, userId: string, brianId: string, input: string): Promise<Outcome<string>> {
 	const mine = await membership(env.DB, userId, brianId);
@@ -235,7 +236,10 @@ export async function setMount(env: Bindings, userId: string, brianId: string, i
 	const { folders, files } = await env.VAULT.getByName(userId).list(`brian/${mount}/`);
 	if (folders.length || files.length) return no(`brian/${mount}/ already holds notes of your own.`);
 	try {
-		await env.DB.prepare('UPDATE members SET mount = ? WHERE brian_id = ? AND user_id = ?').bind(mount, brianId, userId).run();
+		const moves = [env.DB.prepare('UPDATE members SET mount = ? WHERE brian_id = ? AND user_id = ?').bind(mount, brianId, userId)];
+		// The owner renaming their folder renames the brian too; other members' folders keep their names.
+		if (mine.role === 'owner') moves.push(env.DB.prepare('UPDATE brians SET name = ? WHERE id = ?').bind(mount, brianId));
+		await env.DB.batch(moves);
 	} catch (error) {
 		if (String(error).includes('UNIQUE')) return no('Another shared brian already has that folder.');
 		throw error;

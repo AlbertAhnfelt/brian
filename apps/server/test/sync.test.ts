@@ -138,10 +138,14 @@ describe('sync tickets', () => {
 			call('/mcp/sync/mount', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ brian, mount }) });
 		expect((await rename(ann.token, 'work')).status).toBe(200);
 		expect((await session(ann.token)).brians.find((b) => b.id === shared.id)!.mount).toBe('work');
+		expect((await session(ann.token)).brians.find((b) => b.id === shared.id)!.name).toBe('work');
 		expect((await session(bo.token)).brians.find((b) => b.id === shared.id)!.mount).toBe('acme');
+		// A member renaming their folder changes only their folder, not the brian's name.
+		expect((await rename(bo.token, 'bos-copy')).status).toBe(200);
+		expect((await session(bo.token)).brians.find((b) => b.id === shared.id)!.name).toBe('work');
 		// Agents follow the new folder.
 		await tool(ann.token, 'write_page', { path: 'brian/work/b.md', content: 'shared' });
-		expect((await tool(bo.token, 'read_page', { path: 'brian/acme/b.md' })).text).toContain('shared');
+		expect((await tool(bo.token, 'read_page', { path: 'brian/bos-copy/b.md' })).text).toContain('shared');
 		for (const bad of ['Not Valid!', ann.name, 'mine']) expect((await rename(ann.token, bad)).status).toBe(409);
 		expect((await rename(ann.token, 'x', 'b_00000000-0000-0000-0000-000000000000')).status).toBe(409);
 		expect((await call('/mcp/sync/mount', { method: 'POST', body: '{}' })).status).toBe(401);

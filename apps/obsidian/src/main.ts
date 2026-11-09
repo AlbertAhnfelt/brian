@@ -473,6 +473,7 @@ export default class BrianPlugin extends Plugin {
 					this.settings.roots[id] = mount;
 					await this.saveSettings();
 					if (mount !== name) await this.moveFolder(folderOf(to), `brian/${mount}`);
+					if (running.brian.role === 'owner') running.brian = { ...running.brian, name: mount }; // The brian took the new name.
 					new Notice(`Brian: ${running.brian.name} is now in brian/${mount}/. Your agents find it there too.`);
 					return;
 				}
