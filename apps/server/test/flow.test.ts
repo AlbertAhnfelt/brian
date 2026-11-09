@@ -142,7 +142,7 @@ describe('Account entrypoint', () => {
 		const { user, jar } = await signedInUser('delete@example.com');
 		const token = await connect(jar);
 		await tool(token, 'write_page', { path: 'a.md', content: 'gone soon' });
-		expect(await exports.Account.exportPages(user.id)).toHaveLength(1);
+		expect((await exports.Account.exportPages(user.id)).map((p) => p.path).sort()).toEqual(['BRIAN.md', 'a.md']);
 
 		await exports.Account.deleteAccount(user.id);
 		expect(await exports.Account.connections(user.id)).toHaveLength(0);

@@ -80,6 +80,9 @@ function connector(token: string, brian: string | null = null): Connect {
 }
 
 /** A device: its files, its saved state, and (while running) its engine. */
+/** A device's files, minus the root BRIAN.md that Brian writes into every Brian. */
+const notes = (device: Device) => [...device.files.files.keys()].filter((path) => path !== 'BRIAN.md').sort();
+
 class Device {
 	files = new Files();
 	store = new Store();
@@ -208,12 +211,12 @@ describe('the sync engine, with devices against the real server', () => {
 		a.files.files.set('new.md', 'x');
 		await a.engine!.fileRenamed('old.md', 'new.md');
 		await quiet(a, b);
-		expect([...b.files.files.keys()]).toEqual(['new.md']);
+		expect(notes(b)).toEqual(['new.md']);
 		a.files.files.delete('new.md');
 		await a.engine!.fileDeleted('new.md');
 		await quiet(a, b);
-		expect(b.files.files.size).toBe(0);
-		expect((await tool(token, 'list', { prefix: '' })).text).toMatch(/Nothing here yet|brian\//);
+		expect(notes(b)).toEqual([]);
+		expect((await tool(token, 'list', { prefix: '' })).text).toBe('BRIAN.md');
 	});
 
 	it('syncs folder renames and folder deletes', async () => {
@@ -230,11 +233,11 @@ describe('the sync engine, with devices against the real server', () => {
 		}
 		await a.engine!.folderRenamed('proj', 'work');
 		await quiet(a, b);
-		expect([...b.files.files.keys()].sort()).toEqual(['work/deep/two.md', 'work/one.md']);
-		a.files.files.clear();
+		expect(notes(b)).toEqual(['work/deep/two.md', 'work/one.md']);
+		for (const path of notes(a)) a.files.files.delete(path);
 		await a.engine!.folderDeleted('work/');
 		await quiet(a, b);
-		expect(b.files.files.size).toBe(0);
+		expect(notes(b)).toEqual([]);
 	});
 
 	it('keeps a page one device deleted while another edited it', async () => {
@@ -272,7 +275,7 @@ describe('the sync engine, with devices against the real server', () => {
 			'differ 2.md': 'local version',
 			'only-local.md': 'mine'
 		});
-		const listed = (await tool(token, 'list', { prefix: '' })).text.split('\n').filter((l) => l.endsWith('.md')).sort();
+		const listed = (await tool(token, 'list', { prefix: '' })).text.split('\n').filter((l) => l.endsWith('.md') && l !== 'BRIAN.md').sort();
 		expect(listed).toEqual(['differ 2.md', 'differ.md', 'only-local.md', 'same.md']);
 	});
 
@@ -292,8 +295,7 @@ describe('the sync engine, with devices against the real server', () => {
 		await quiet(a, b);
 		await quiet(a, b);
 		const expected = { 'idea.md': 'from a', 'idea 2.md': 'from b' };
-		expect(Object.fromEntries(a.files.files)).toEqual(expected);
-		expect(Object.fromEntries(b.files.files)).toEqual(expected);
+		for (const device of [a, b]) expect(Object.fromEntries(notes(device).map((path) => [path, device.files.files.get(path)]))).toEqual(expected);
 	});
 });
 

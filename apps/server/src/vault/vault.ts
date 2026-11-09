@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { LIMITS, loginAllowed } from '@brian/shared';
+import { LIMITS, loginAllowed, withRules } from '@brian/shared';
 import {
 	applySplices,
 	decodeFrame,
@@ -435,6 +435,28 @@ export class Vault extends DurableObject<Env> {
 			this.record(page.id, 'delete', page.path, null, by);
 			this.emit({ t: 'gone', id: page.id, seq: this.currentSeq() });
 		}
+	}
+
+	/**
+	 * Keeps Brian's block of the root BRIAN.md set to `block` (see `withRules`), creating the page if
+	 * there is none. Only acts when the block differs from the last one written, so a page the user
+	 * deleted stays deleted until the rules change. Never touches the rest of the page.
+	 */
+	ensureRules(block: string): boolean {
+		const hash = fnv1a(block);
+		if (this.sql.exec<{ value: number }>(`SELECT value FROM meta WHERE key = 'rules'`).toArray()[0]?.value === hash) return false;
+		return this.commit(() => {
+			const existing = this.find('BRIAN.md');
+			const content = withRules(existing?.content ?? null, normalizeText(block));
+			this.sql.exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('rules', ?)`, hash);
+			if (existing) {
+				checkSize(content);
+				return this.change(existing, splices(existing.content, content), BRIAN) !== existing;
+			}
+			this.checkCanCreate('BRIAN.md');
+			this.create('BRIAN.md', content, BRIAN);
+			return true;
+		});
 	}
 
 	/** Pages written or deleted after `since` (0 for everything), oldest first, `limit` at a time. */
@@ -1009,6 +1031,13 @@ export class Vault extends DurableObject<Env> {
 			this.sql.exec(`INSERT INTO ystate (page_id, part, data) VALUES (?, ?, ?)`, pageId, part, chunk.buffer);
 		}
 	}
+}
+
+/** A 32-bit FNV-1a hash, to tell whether a text changed without storing it. */
+function fnv1a(text: string): number {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+	return hash >>> 0;
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {

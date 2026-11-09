@@ -1,4 +1,4 @@
-import type { BrianSummary } from '@brian/shared';
+import { agentRules, rootBrianRules, type BrianSummary } from '@brian/shared';
 import { foldPath, normalizePath, normalizePrefix, VaultError } from '../vault/paths';
 import type { Author, Listing, Page, SearchHit, Vault } from '../vault/vault';
 import { membershipsOf, type Bindings } from './members';
@@ -36,7 +36,15 @@ export class Brian {
 			env.DB.prepare('SELECT username FROM users WHERE id = ?').bind(userId).first<string>('username'),
 			membershipsOf(env.DB, userId)
 		]);
+		// The root BRIAN.md carries the rules for agents that work on the files directly. A failure
+		// here (a full brian, say) must not stop the user's own request.
+		if (username) await env.VAULT.getByName(userId).ensureRules(rootBrianRules(username)).catch((error: Error) => console.error('ensureRules failed', error.message));
 		return new Brian(env, userId, username, brians, source);
+	}
+
+	/** The shared brian a path is in, or null for the personal brian. */
+	sharedBrianOf(path: string): BrianSummary | null {
+		return this.route(path).brian;
 	}
 
 	async list(prefix = ''): Promise<Listing> {
@@ -57,11 +65,14 @@ export class Brian {
 	}
 
 	/** Searches every brian at once and merges the hits by score. */
-	async search(query: string, limit = 20): Promise<SearchHit[]> {
+	async search(query: string, limit = 20): Promise<(SearchHit & { brian: BrianSummary | null })[]> {
 		this.ready();
-		const targets = [{ vault: this.personal(), outer: '' }, ...this.brians.map((b) => this.targetOf(b, ''))];
+		const targets: { vault: DurableObjectStub<Vault>; outer: string; brian: BrianSummary | null }[] = [
+			{ vault: this.personal(), outer: '', brian: null },
+			...this.brians.map((b) => this.targetOf(b, ''))
+		];
 		const results = await Promise.all(
-			targets.map(async ({ vault, outer }) => (await vault.search(query, limit)).map((hit) => ({ ...hit, path: outer + hit.path })))
+			targets.map(async ({ vault, outer, brian }) => (await vault.search(query, limit)).map((hit) => ({ ...hit, path: outer + hit.path, brian })))
 		);
 		return results
 			.flat()
@@ -171,24 +182,23 @@ export class Brian {
 }
 
 /**
- * The MCP server's instructions: only what always holds, plus this user's shared brians.
- * Everything that changes with the user lives in the BRIAN.md files, which agents keep current.
- * Roles are described here, not enforced here: the router refuses what a role can't do.
+ * The MCP server's instructions: the rules every agent follows (the same ones the root BRIAN.md
+ * holds), what only applies through MCP, and this user's shared brians. Roles are described here,
+ * not enforced here: the router refuses what a role can't do.
  */
 export function instructions(brian: Brian): string {
 	const me = brian.username ?? 'the user';
 	const shared = brian.brians.length
 		? brian.brians.map((b) => `- brian/${b.mount}/ — "${b.name}" (${b.visibility}). You are ${b.role === 'owner' ? 'the owner' : `a ${b.role}`}.`).join('\n')
 		: '- (none yet)';
-	return `This is ${me}'s Brian: their knowledge, as markdown pages.
-
-Start by reading brian/BRIAN.md: it says how ${me} wants you to work, and you keep it up to date. Each shared brian has its own BRIAN.md, a guide to what's in it, which you also keep current.
+	return `This is ${me}'s Brian: their knowledge, as markdown pages. Start by reading brian/BRIAN.md, about ${me} and how they like to work. BRIAN.md at the root holds the rules below, for agents working on the files directly.
 
 Always:
-- Outside brian/ are ${me}'s own notes. Edit them only when ${me} asks you to, or is working on that page with you.
-- brian/${me}/ is yours: write the pages you create on your own there.
-- Don't add links between brians.
+${agentRules(me)
+	.map((rule) => `- ${rule.replace(/`/g, '')}`)
+	.join('\n')}
 - search only finds pages: read whole pages with read_page before acting on them. To overwrite a page, pass the etag from read_page.
+- Pages from shared brians come labelled as such in read_page and search.
 
 Shared brians (editors' changes reach every member; viewers can read but not change them):
 ${shared}`;

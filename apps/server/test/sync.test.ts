@@ -214,7 +214,7 @@ describe('syncing a brian', () => {
 		await tool(ann.token, 'write_page', { path: 'a.md', content: 'one two' });
 		const device = await personalDevice(ann.token);
 		const { header } = await device.request({ t: 'changes', since: 0 });
-		const [entry] = header.changes as { id: string }[];
+		const entry = (header.changes as { id: string; path: string }[]).find((c) => c.path === 'a.md')!;
 		const pulled = await device.request({ t: 'pull', ids: [entry.id] }, [new Uint8Array()]);
 		const doc = new Y.Doc();
 		Y.applyUpdate(doc, pulled.payloads[0]);
