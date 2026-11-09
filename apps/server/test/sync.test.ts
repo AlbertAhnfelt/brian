@@ -3,7 +3,7 @@ import { decodeFrame, encodeFrame, setText, TEXT, type SyncSession } from '@bria
 import { exports } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { call, connect, ORIGIN, signedInUser, tool } from './helpers';
+import { addMember, call, connect, ORIGIN, signedInUser, tool } from './helpers';
 
 const account = exports.Account;
 let seq = 0;
@@ -132,7 +132,7 @@ describe('sync tickets', () => {
 		const ann = await person('ann');
 		const bo = await person('bo');
 		const shared = value(await account.createBrian(ann.user.id, 'acme', 'private')) as BrianSummary;
-		value(await account.addMember(ann.user.id, shared.id, bo.name, 'editor'));
+		value(await addMember(ann.user.id, shared.id, bo.name, 'editor'));
 		await tool(ann.token, 'write_page', { path: 'brian/mine/a.md', content: 'own' });
 		const rename = (token: string, mount: string, brian = shared.id) =>
 			call('/mcp/sync/mount', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ brian, mount }) });
@@ -327,7 +327,7 @@ describe('shared brians', () => {
 		const ann = await person('ann');
 		const bo = await person('bo');
 		const brian = value(await account.createBrian(ann.user.id, 'course', 'private')) as BrianSummary;
-		value(await account.addMember(ann.user.id, brian.id, bo.name, 'viewer'));
+		value(await addMember(ann.user.id, brian.id, bo.name, 'viewer'));
 		const ticketOf = async (token: string) => (await session(token)).brians.find((b) => b.id === brian.id)!.ticket;
 		const owner = await Device.open(await ticketOf(ann.token));
 		const viewer = await Device.open(await ticketOf(bo.token));

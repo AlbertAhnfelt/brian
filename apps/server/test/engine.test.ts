@@ -3,7 +3,7 @@ import type { BrianSummary, Outcome } from '@brian/shared';
 import { exports } from 'cloudflare:workers';
 import * as Y from 'yjs';
 import { describe, expect, it } from 'vitest';
-import { call, connect as oauthConnect, signedInUser, tool } from './helpers';
+import { addMember, call, connect as oauthConnect, signedInUser, tool } from './helpers';
 
 /** A device's files, in memory. `typing` marks files someone is typing in. */
 class Files implements LocalFiles {
@@ -361,7 +361,7 @@ describe('viewers and many devices', () => {
 		const viewer = await signedInUser(`view-${crypto.randomUUID().slice(0, 6)}@example.com`, `view${crypto.randomUUID().slice(0, 6)}`);
 		const brian = (await exports.Account.createBrian(owner.user.id, 'course', 'private')) as Outcome<BrianSummary>;
 		if (!brian.ok) throw new Error(brian.message);
-		await exports.Account.addMember(owner.user.id, brian.value.id, viewer.user.username!, 'viewer');
+		await addMember(owner.user.id, brian.value.id, viewer.user.username!, 'viewer');
 		const teacher = new Device(await oauthConnect(owner.jar), false, brian.value.id);
 		const student = new Device(await oauthConnect(viewer.jar), true, brian.value.id);
 		await teacher.start();

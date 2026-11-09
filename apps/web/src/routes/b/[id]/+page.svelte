@@ -48,18 +48,42 @@
 		</ul>
 
 		{#if owner}
-			<form method="post" action="?/add" use:enhance class="inline">
-				<input name="username" placeholder="username" list="friends" autocapitalize="none" spellcheck="false" required />
-				<datalist id="friends">
-					{#each data.friends as friend (friend)}<option value={friend}></option>{/each}
-				</datalist>
-				<select name="role">
-					<option value="editor">editor</option>
-					<option value="viewer">viewer</option>
-				</select>
-				<button class="button ghost">Add</button>
-			</form>
-			<p class="muted small-print">Editors' changes reach every member. Viewers can read, but not change it.</p>
+			{#if view.invites.length}
+				<h3>Invited</h3>
+				<ul>
+					{#each view.invites as sent (sent.username)}
+						<li class="row">
+							<span>{sent.username} <span class="muted">· {sent.role} · waiting for an answer</span></span>
+							<form method="post" action="?/cancel" use:enhance>
+								<input type="hidden" name="username" value={sent.username} />
+								<button class="button ghost small">cancel</button>
+							</form>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+
+			<h2>Invite a friend</h2>
+			{#if data.friends.length}
+				<form method="post" action="?/invite" use:enhance class="inline">
+					<select name="username" required>
+						{#each data.friends as friend (friend)}<option value={friend}>{friend}</option>{/each}
+					</select>
+					<select name="role">
+						<option value="editor">editor</option>
+						<option value="viewer">viewer</option>
+					</select>
+					<button class="button ghost">Invite</button>
+				</form>
+				<p class="muted small-print">
+					They join once they accept. Editors' changes reach every member; viewers can read, but not change it.
+				</p>
+			{:else}
+				<p class="muted">
+					{view.invites.length || view.members.length > 1 ? 'All your friends are in here or invited.' : 'You can invite your friends.'}
+					Add more on your <a href="/account">account page</a>.
+				</p>
+			{/if}
 
 			<h2>Visibility</h2>
 			<form method="post" action="?/visibility" use:enhance>
@@ -96,6 +120,12 @@
 	h2 {
 		margin: 2.25rem 0 0.75rem;
 		font-size: 1.3rem;
+		font-weight: 500;
+	}
+
+	h3 {
+		margin: 1.5rem 0 0.5rem;
+		font-size: 1.05rem;
 		font-weight: 500;
 	}
 

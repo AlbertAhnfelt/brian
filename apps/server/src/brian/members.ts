@@ -7,7 +7,9 @@ import {
 	sharedBrianMd,
 	type BrianSummary,
 	type BrianView,
+	type Invite,
 	type Member,
+	type SentInvite,
 	type Outcome,
 	type Role,
 	type Visibility
@@ -137,7 +139,19 @@ export async function viewBrian(db: D1Database, userId: string, brianId: string)
 			)
 			.bind(brianId)
 			.all<Member>();
-		return { member: true, brian: mine, members: members.results };
+		const invites =
+			mine.role === 'owner'
+				? (
+						await db
+							.prepare(
+								`SELECT users.username, invites.role FROM invites JOIN users ON users.id = invites.user_id
+								 WHERE invites.brian_id = ? ORDER BY users.username`
+							)
+							.bind(brianId)
+							.all<SentInvite>()
+					).results
+				: [];
+		return { member: true, brian: mine, members: members.results, invites };
 	}
 	const brian = await db
 		.prepare(`SELECT id, name FROM brians WHERE id = ? AND visibility = 'public'`)
@@ -155,16 +169,83 @@ export async function setVisibility(db: D1Database, userId: string, brianId: str
 
 const isMemberRole = (role: string): role is 'editor' | 'viewer' => role === 'editor' || role === 'viewer';
 
-/** The owner adds someone by username. They're in at once: the brian appears in their Brian. */
-export async function addMember(env: Bindings, userId: string, brianId: string, username: string, role: string): Promise<Outcome> {
+/**
+ * The owner invites a friend (someone in their friends list) by username. Nothing reaches the
+ * friend's Brian until they accept: nobody can be put in a brian without saying yes.
+ */
+export async function invite(env: Bindings, userId: string, brianId: string, username: string, role: string): Promise<Outcome> {
+	const db = env.DB;
 	if (!isMemberRole(role)) return no('Members are editors or viewers.');
-	const brian = await owned(env.DB, userId, brianId);
-	if (!brian) return no(NOT_FOUND);
-	const user = await userByUsername(env.DB, username);
-	if (!user) return no(`No one is called "${normalizeName(username)}".`);
-	if (await membership(env.DB, user.id, brianId)) return no(`${user.username} is already a member.`);
-	const added = await insertMember(env, brian, user.id, role);
-	return added.ok ? done : added;
+	if (!(await owned(db, userId, brianId))) return no(NOT_FOUND);
+	const user = await userByUsername(db, username);
+	const friend = user && (await db.prepare('SELECT 1 AS yes FROM friends WHERE user_id = ? AND friend_id = ?').bind(userId, user.id).first('yes'));
+	// The same answer for strangers and missing users, so invites can't probe who exists.
+	if (!user || !friend) return no('You can only invite your friends. Add them on your account page first.');
+	if (await membership(db, user.id, brianId)) return no(`${user.username} is already a member.`);
+	try {
+		await db.prepare('INSERT INTO invites (brian_id, user_id, role, invited_by) VALUES (?, ?, ?, ?)').bind(brianId, user.id, role, userId).run();
+	} catch (error) {
+		if (String(error).includes('UNIQUE')) return no(`${user.username} is already invited.`);
+		throw error;
+	}
+	return done;
+}
+
+/** The owner takes back an invitation that hasn't been answered. */
+export async function cancelInvite(env: Bindings, userId: string, brianId: string, username: string): Promise<Outcome> {
+	const db = env.DB;
+	if (!(await owned(db, userId, brianId))) return no(NOT_FOUND);
+	await db
+		.prepare('DELETE FROM invites WHERE brian_id = ? AND user_id = (SELECT id FROM users WHERE username = ?)')
+		.bind(brianId, normalizeName(username))
+		.run();
+	return done;
+}
+
+/** Invitations waiting for this user's answer, newest first. */
+export async function invitesOf(db: D1Database, userId: string): Promise<Invite[]> {
+	const rows = await db
+		.prepare(
+			`SELECT brians.id AS brianId, brians.name AS brianName, invites.role, users.username AS "from", invites.created_at AS createdAt
+			 FROM invites JOIN brians ON brians.id = invites.brian_id JOIN users ON users.id = invites.invited_by
+			 WHERE invites.user_id = ? ORDER BY invites.created_at DESC`
+		)
+		.bind(userId)
+		.all<Invite>();
+	return rows.results;
+}
+
+/** The invited user says yes: they become a member with the role they were invited as. */
+export async function acceptInvite(env: Bindings, userId: string, brianId: string): Promise<Outcome<BrianSummary>> {
+	const db = env.DB;
+	const pending = await db
+		.prepare(
+			`SELECT brians.id, brians.name, invites.role FROM invites JOIN brians ON brians.id = invites.brian_id
+			 WHERE invites.user_id = ? AND invites.brian_id = ?`
+		)
+		.bind(userId, brianId)
+		.first<{ id: string; name: string; role: 'editor' | 'viewer' }>();
+	if (!pending) return no('This invitation is no longer open.');
+	const existing = await membership(db, userId, brianId);
+	if (existing) {
+		// Joined meanwhile (a public brian, as a viewer): the invitation's role applies.
+		if (existing.role === 'viewer' && pending.role === 'editor') {
+			await db.prepare(`UPDATE members SET role = 'editor' WHERE brian_id = ? AND user_id = ?`).bind(brianId, userId).run();
+			await kick(env, brianId, userId);
+		}
+		await db.prepare('DELETE FROM invites WHERE brian_id = ? AND user_id = ?').bind(brianId, userId).run();
+		return ok((await membership(db, userId, brianId))!);
+	}
+	const joined = await insertMember(env, pending, userId, pending.role);
+	if (!joined.ok) return joined;
+	await db.prepare('DELETE FROM invites WHERE brian_id = ? AND user_id = ?').bind(brianId, userId).run();
+	return ok((await membership(db, userId, brianId))!);
+}
+
+/** The invited user says no. The owner isn't told beyond the invitation disappearing. */
+export async function declineInvite(env: Bindings, userId: string, brianId: string): Promise<Outcome> {
+	await env.DB.prepare('DELETE FROM invites WHERE brian_id = ? AND user_id = ?').bind(brianId, userId).run();
+	return done;
 }
 
 export async function setRole(env: Bindings, userId: string, brianId: string, username: string, role: string): Promise<Outcome> {

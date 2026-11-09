@@ -1,7 +1,7 @@
 import { getOAuthApi } from '@cloudflare/workers-oauth-provider';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { oauthOptions } from './oauth';
-import type { AccountRpc, BrianSummary, BrianView, Connection, Outcome, Person, Role, Visibility } from '@brian/shared';
+import type { AccountRpc, BrianSummary, BrianView, Connection, Invite, Outcome, Person, Role, Visibility } from '@brian/shared';
 import * as friends from './brian/friends';
 import * as members from './brian/members';
 import type { ExportedPage } from './vault/vault';
@@ -70,8 +70,24 @@ export class Account extends WorkerEntrypoint<Env> implements AccountRpc {
 		return members.setVisibility(this.env.DB, userId, brianId, visibility);
 	}
 
-	addMember(userId: string, brianId: string, username: string, role: Exclude<Role, 'owner'>): Promise<Outcome> {
-		return members.addMember(this.env, userId, brianId, username, role);
+	invite(userId: string, brianId: string, username: string, role: Exclude<Role, 'owner'>): Promise<Outcome> {
+		return members.invite(this.env, userId, brianId, username, role);
+	}
+
+	cancelInvite(userId: string, brianId: string, username: string): Promise<Outcome> {
+		return members.cancelInvite(this.env, userId, brianId, username);
+	}
+
+	invites(userId: string): Promise<Invite[]> {
+		return members.invitesOf(this.env.DB, userId);
+	}
+
+	acceptInvite(userId: string, brianId: string): Promise<Outcome<BrianSummary>> {
+		return members.acceptInvite(this.env, userId, brianId);
+	}
+
+	declineInvite(userId: string, brianId: string): Promise<Outcome> {
+		return members.declineInvite(this.env, userId, brianId);
 	}
 
 	setRole(userId: string, brianId: string, username: string, role: Exclude<Role, 'owner'>): Promise<Outcome> {

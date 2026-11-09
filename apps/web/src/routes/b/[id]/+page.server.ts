@@ -8,8 +8,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	// Private brians look the same as missing ones to non-members.
 	const view = await account().viewBrian(locals.user.id, params.id);
 	if (!view) error(404, 'No such brian.');
-	// Friends not yet in the brian, suggested when adding members.
-	const inside = new Set(view.member ? view.members.map((m) => m.username) : []);
+	// Friends not yet in the brian or invited to it: the people the owner can invite.
+	const inside = new Set(view.member ? [...view.members, ...view.invites].map((m) => m.username) : []);
 	const friends = view.member && view.brian.role === 'owner' ? (await account().friends(locals.user.id)).filter((f) => !inside.has(f)) : [];
 	return { view, friends };
 };
@@ -32,8 +32,9 @@ export const actions: Actions = {
 		if (failed) return failed;
 		redirect(303, '/brians');
 	},
-	add: (event) =>
-		act(event, (userId, form) => account().addMember(userId, event.params.id, field(form, 'username'), memberRole(form))),
+	invite: (event) =>
+		act(event, (userId, form) => account().invite(userId, event.params.id, field(form, 'username'), memberRole(form))),
+	cancel: (event) => act(event, (userId, form) => account().cancelInvite(userId, event.params.id, field(form, 'username'))),
 	role: (event) =>
 		act(event, (userId, form) => account().setRole(userId, event.params.id, field(form, 'username'), memberRole(form))),
 	remove: (event) => act(event, (userId, form) => account().removeMember(userId, event.params.id, field(form, 'username'))),

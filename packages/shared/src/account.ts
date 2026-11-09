@@ -1,4 +1,4 @@
-import type { BrianSummary, BrianView, Outcome, Role, Visibility } from './brians';
+import type { BrianSummary, BrianView, Invite, Outcome, Role, Visibility } from './brians';
 
 /** A connected app (Claude, ChatGPT, …) as shown on the account page. */
 export interface Connection {
@@ -40,7 +40,13 @@ export interface AccountRpc {
 	viewBrian(userId: string, brianId: string): Promise<BrianView | null>;
 	createBrian(userId: string, name: string, visibility: Visibility): Promise<Outcome<BrianSummary>>;
 	setVisibility(userId: string, brianId: string, visibility: Visibility): Promise<Outcome>;
-	addMember(userId: string, brianId: string, username: string, role: Exclude<Role, 'owner'>): Promise<Outcome>;
+	/** The owner invites a friend. They become a member only when they accept. */
+	invite(userId: string, brianId: string, username: string, role: Exclude<Role, 'owner'>): Promise<Outcome>;
+	cancelInvite(userId: string, brianId: string, username: string): Promise<Outcome>;
+	/** Invitations waiting for this user's answer, newest first. */
+	invites(userId: string): Promise<Invite[]>;
+	acceptInvite(userId: string, brianId: string): Promise<Outcome<BrianSummary>>;
+	declineInvite(userId: string, brianId: string): Promise<Outcome>;
 	setRole(userId: string, brianId: string, username: string, role: Exclude<Role, 'owner'>): Promise<Outcome>;
 	removeMember(userId: string, brianId: string, username: string): Promise<Outcome>;
 	/** "Sync to this brian": join a public brian as a viewer. */

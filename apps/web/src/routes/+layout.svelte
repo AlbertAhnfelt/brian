@@ -18,7 +18,9 @@
 	<nav>
 		<a href="/about" aria-current={page.url.pathname === '/about' ? 'page' : undefined}>about</a>
 		{#if data.user}
-			<a href="/brians" aria-current={page.url.pathname === '/brians' || page.url.pathname.startsWith('/b/') ? 'page' : undefined}>brians</a>
+			<a href="/brians" aria-current={page.url.pathname === '/brians' || page.url.pathname.startsWith('/b/') ? 'page' : undefined}
+				>brians{#if data.invites}<span class="badge" title="{data.invites} invitation{data.invites === 1 ? '' : 's'}">{data.invites}</span>{/if}</a
+			>
 			<a href="/account" aria-current={page.url.pathname === '/account' ? 'page' : undefined}>account</a>
 			<form method="post" action="/logout">
 				<button class="button ghost">log out</button>
@@ -80,6 +82,19 @@
 	nav a:not(.button):hover,
 	nav a[aria-current='page'] {
 		color: var(--ink);
+	}
+
+	.badge {
+		display: inline-block;
+		min-width: 1.1rem;
+		margin-left: 0.3rem;
+		padding: 0 0.3rem;
+		border-radius: 999px;
+		background: var(--tag);
+		color: var(--ink);
+		font-size: 0.75rem;
+		line-height: 1.1rem;
+		text-align: center;
 	}
 
 	nav .button {

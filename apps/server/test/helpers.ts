@@ -1,4 +1,4 @@
-import { createSession, pkceChallenge, SESSION_COOKIE, setUsername, signIn, type User } from '@brian/shared';
+import { createSession, pkceChallenge, SESSION_COOKIE, setUsername, signIn, type Outcome, type User } from '@brian/shared';
 import { env, exports } from 'cloudflare:workers';
 
 export const ORIGIN = env.BASE_URL;
@@ -140,4 +140,19 @@ export async function failure(promise: Promise<unknown>): Promise<string> {
 		return error instanceof Error ? error.message : String(error);
 	}
 	throw new Error('Expected the call to fail');
+}
+
+/**
+ * Makes `username` a member the only way there is: the owner adds them as a friend, invites them,
+ * and they accept. Returns the first refusal along the way.
+ */
+export async function addMember(ownerId: string, brianId: string, username: string, role: 'editor' | 'viewer'): Promise<Outcome> {
+	const account = exports.Account;
+	const friended = await account.addFriend(ownerId, username);
+	if (!friended.ok) return friended;
+	const invited = await account.invite(ownerId, brianId, username, role);
+	if (!invited.ok) return invited;
+	const id = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(username).first<string>('id');
+	const accepted = await account.acceptInvite(id!, brianId);
+	return accepted.ok ? { ok: true, value: undefined } : accepted;
 }

@@ -1,7 +1,7 @@
 import type { BrianSummary, Outcome } from '@brian/shared';
 import { env, exports } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
-import { call, connect, signedInUser, tool } from './helpers';
+import { addMember, call, connect, signedInUser, tool } from './helpers';
 
 const account = exports.Account;
 
@@ -72,7 +72,7 @@ describe('roles', () => {
 		const ann = await person('ann');
 		const bo = await person('bo');
 		const brian = await brianOf(ann);
-		value(await account.addMember(ann.user.id, brian.id, bo.name, 'editor'));
+		value(await addMember(ann.user.id, brian.id, bo.name, 'editor'));
 
 		await tool(ann.token, 'write_page', { path: 'brian/acme/plan.md', content: 'v1' });
 		const read = await tool(bo.token, 'read_page', { path: 'brian/acme/plan.md' });
@@ -86,7 +86,7 @@ describe('roles', () => {
 		const cy = await person('cy');
 		const brian = await brianOf(ann);
 		await tool(ann.token, 'write_page', { path: 'brian/acme/plan.md', content: 'v1' });
-		value(await account.addMember(ann.user.id, brian.id, cy.name, 'viewer'));
+		value(await addMember(ann.user.id, brian.id, cy.name, 'viewer'));
 
 		expect((await tool(cy.token, 'read_page', { path: 'brian/acme/plan.md' })).text).toContain('v1');
 		for (const [name, args] of [
@@ -107,23 +107,23 @@ describe('roles', () => {
 		const bo = await person('bo');
 		const cy = await person('cy');
 		const brian = await brianOf(ann);
-		value(await account.addMember(ann.user.id, brian.id, bo.name, 'editor'));
+		value(await addMember(ann.user.id, brian.id, bo.name, 'editor'));
 
-		expect(await account.addMember(bo.user.id, brian.id, cy.name, 'editor')).toMatchObject({ ok: false });
+		expect(await addMember(bo.user.id, brian.id, cy.name, 'editor')).toMatchObject({ ok: false });
 		expect(await account.setVisibility(bo.user.id, brian.id, 'public')).toMatchObject({ ok: false });
 		expect(await account.deleteBrian(bo.user.id, brian.id)).toMatchObject({ ok: false });
 		expect(await account.removeMember(bo.user.id, brian.id, ann.name)).toMatchObject({ ok: false });
-		expect(await account.addMember(ann.user.id, brian.id, cy.name, 'owner' as 'editor')).toMatchObject({ ok: false });
+		expect(await addMember(ann.user.id, brian.id, cy.name, 'owner' as 'editor')).toMatchObject({ ok: false });
 		expect(await account.setRole(ann.user.id, brian.id, ann.name, 'viewer')).toMatchObject({ ok: false });
-		expect(await account.addMember(ann.user.id, brian.id, bo.name, 'viewer')).toMatchObject({ ok: false });
-		expect(await account.addMember(ann.user.id, brian.id, 'nobody', 'viewer')).toMatchObject({ ok: false });
+		expect(await addMember(ann.user.id, brian.id, bo.name, 'viewer')).toMatchObject({ ok: false });
+		expect(await addMember(ann.user.id, brian.id, 'nobody', 'viewer')).toMatchObject({ ok: false });
 	});
 
 	it('a changed role or removal applies from the next call', async () => {
 		const ann = await person('ann');
 		const bo = await person('bo');
 		const brian = await brianOf(ann);
-		value(await account.addMember(ann.user.id, brian.id, bo.name, 'editor'));
+		value(await addMember(ann.user.id, brian.id, bo.name, 'editor'));
 		expect((await tool(bo.token, 'write_page', { path: 'brian/acme/a.md', content: 'x' })).isError).toBe(false);
 
 		value(await account.setRole(ann.user.id, brian.id, bo.name, 'viewer'));
@@ -139,7 +139,7 @@ describe('roles', () => {
 		const ann = await person('ann');
 		const bo = await person('bo');
 		const brian = await brianOf(ann);
-		value(await account.addMember(ann.user.id, brian.id, bo.name, 'viewer'));
+		value(await addMember(ann.user.id, brian.id, bo.name, 'viewer'));
 		expect(await account.leave(ann.user.id, brian.id)).toMatchObject({ ok: false });
 		value(await account.leave(bo.user.id, brian.id));
 		expect(await account.brians(bo.user.id)).toEqual([]);
@@ -197,8 +197,8 @@ describe('folder names', () => {
 		await tool(bo.token, 'write_page', { path: 'brian/acme/mine.md', content: 'bo wrote this' });
 		const acme = await brianOf(ann);
 		const named = await brianOf(ann, bo.name);
-		value(await account.addMember(ann.user.id, acme.id, bo.name, 'editor'));
-		value(await account.addMember(ann.user.id, named.id, bo.name, 'editor'));
+		value(await addMember(ann.user.id, acme.id, bo.name, 'editor'));
+		value(await addMember(ann.user.id, named.id, bo.name, 'editor'));
 
 		const mounts = (await account.brians(bo.user.id)).map((b) => [b.name, b.mount]);
 		expect(mounts).toEqual([
@@ -236,7 +236,7 @@ describe('one Brian across brians', () => {
 		const ann = await person('ann');
 		const bo = await person('bo');
 		const brian = await brianOf(ann);
-		value(await account.addMember(ann.user.id, brian.id, bo.name, 'viewer'));
+		value(await addMember(ann.user.id, brian.id, bo.name, 'viewer'));
 		const text = await initialize(bo.token);
 		expect(text).toContain(`This is ${bo.name}'s Brian`);
 		expect(text).toContain(`brian/${bo.name}/ is yours`);
@@ -296,7 +296,7 @@ describe('deleting', () => {
 		const ann = await person('ann');
 		const bo = await person('bo');
 		const brian = await brianOf(ann);
-		value(await account.addMember(ann.user.id, brian.id, bo.name, 'editor'));
+		value(await addMember(ann.user.id, brian.id, bo.name, 'editor'));
 		value(await account.deleteBrian(ann.user.id, brian.id));
 		expect(await account.brians(bo.user.id)).toEqual([]);
 		expect(await env.VAULT.getByName(brian.id).list('')).toEqual({ folders: [], files: [] });
@@ -307,13 +307,109 @@ describe('deleting', () => {
 		const bo = await person('bo');
 		const annOwns = await brianOf(ann, 'anns');
 		const boOwns = await brianOf(bo, 'bos');
-		value(await account.addMember(ann.user.id, annOwns.id, bo.name, 'editor'));
-		value(await account.addMember(bo.user.id, boOwns.id, ann.name, 'editor'));
+		value(await addMember(ann.user.id, annOwns.id, bo.name, 'editor'));
+		value(await addMember(bo.user.id, boOwns.id, ann.name, 'editor'));
 
 		await account.deleteAccount(ann.user.id);
 		expect((await account.brians(bo.user.id)).map((b) => b.name)).toEqual(['bos']);
 		expect(await env.VAULT.getByName(annOwns.id).list('')).toEqual({ folders: [], files: [] });
 		const view = await account.viewBrian(bo.user.id, boOwns.id);
 		expect(view).toMatchObject({ members: [{ username: bo.name, role: 'owner' }] });
+	});
+});
+
+describe('invitations', () => {
+	it('only reach friends, and change nothing until accepted', async () => {
+		const ann = await person('ann');
+		const bo = await person('bo');
+		const brian = await brianOf(ann);
+		await tool(ann.token, 'write_page', { path: 'brian/acme/plan.md', content: 'secret plan' });
+
+		// Not a friend yet: refused, with the same answer as for someone who doesn't exist.
+		const stranger = await account.invite(ann.user.id, brian.id, bo.name, 'editor');
+		const nobody = await account.invite(ann.user.id, brian.id, 'nobody-here', 'editor');
+		expect(stranger).toMatchObject({ ok: false });
+		expect(nobody).toEqual(stranger);
+
+		value(await account.addFriend(ann.user.id, bo.name));
+		value(await account.invite(ann.user.id, brian.id, bo.name, 'editor'));
+		expect(await account.invite(ann.user.id, brian.id, bo.name, 'editor')).toMatchObject({ ok: false }); // Twice.
+
+		// Invited, not in: no membership, no folder, no access.
+		expect(await account.brians(bo.user.id)).toEqual([]);
+		expect((await tool(bo.token, 'list', { prefix: 'brian/' })).text).not.toContain('acme');
+		expect((await tool(bo.token, 'read_page', { path: 'brian/acme/plan.md' })).isError).toBe(true);
+		expect(await account.viewBrian(bo.user.id, brian.id)).toBeNull();
+
+		expect(await account.invites(bo.user.id)).toMatchObject([{ brianId: brian.id, brianName: 'acme', role: 'editor', from: ann.name }]);
+		expect(await account.viewBrian(ann.user.id, brian.id)).toMatchObject({ invites: [{ username: bo.name, role: 'editor' }] });
+
+		const joined = value(await account.acceptInvite(bo.user.id, brian.id));
+		expect(joined).toMatchObject({ id: brian.id, role: 'editor', mount: 'acme' });
+		expect(await account.invites(bo.user.id)).toEqual([]);
+		expect((await tool(bo.token, 'read_page', { path: 'brian/acme/plan.md' })).text).toContain('secret plan');
+		expect(await account.viewBrian(ann.user.id, brian.id)).toMatchObject({ invites: [] });
+	});
+
+	it('can be declined, or cancelled by the owner', async () => {
+		const ann = await person('ann');
+		const bo = await person('bo');
+		const brian = await brianOf(ann);
+		value(await account.addFriend(ann.user.id, bo.name));
+
+		value(await account.invite(ann.user.id, brian.id, bo.name, 'viewer'));
+		value(await account.declineInvite(bo.user.id, brian.id));
+		expect(await account.invites(bo.user.id)).toEqual([]);
+		expect(await account.acceptInvite(bo.user.id, brian.id)).toMatchObject({ ok: false });
+		expect(await account.brians(bo.user.id)).toEqual([]);
+
+		value(await account.invite(ann.user.id, brian.id, bo.name, 'viewer'));
+		value(await account.cancelInvite(ann.user.id, brian.id, bo.name));
+		expect(await account.acceptInvite(bo.user.id, brian.id)).toMatchObject({ ok: false });
+		expect(await account.brians(bo.user.id)).toEqual([]);
+	});
+
+	it('are only sent by the owner, and only answered by the person invited', async () => {
+		const ann = await person('ann');
+		const bo = await person('bo');
+		const cy = await person('cy');
+		const brian = await brianOf(ann);
+		value(await addMember(ann.user.id, brian.id, bo.name, 'editor'));
+
+		// An editor can't invite, even their own friends.
+		value(await account.addFriend(bo.user.id, cy.name));
+		expect(await account.invite(bo.user.id, brian.id, cy.name, 'editor')).toMatchObject({ ok: false });
+
+		value(await account.addFriend(ann.user.id, cy.name));
+		value(await account.invite(ann.user.id, brian.id, cy.name, 'viewer'));
+		// Someone else can't accept, decline or cancel cy's invitation.
+		expect(await account.acceptInvite(bo.user.id, brian.id)).toMatchObject({ ok: false });
+		await account.declineInvite(bo.user.id, brian.id);
+		expect(await account.cancelInvite(bo.user.id, brian.id, cy.name)).toMatchObject({ ok: false });
+		expect(await account.invites(cy.user.id)).toHaveLength(1);
+		expect(await account.invite(ann.user.id, brian.id, ann.name, 'editor')).toMatchObject({ ok: false });
+		expect(await account.invite(ann.user.id, brian.id, cy.name, 'owner' as 'editor')).toMatchObject({ ok: false });
+	});
+
+	it('upgrade a viewer who joined a public brian meanwhile', async () => {
+		const ann = await person('ann');
+		const bo = await person('bo');
+		const brian = await brianOf(ann, 'open', 'public');
+		value(await account.addFriend(ann.user.id, bo.name));
+		value(await account.invite(ann.user.id, brian.id, bo.name, 'editor'));
+		value(await account.join(bo.user.id, brian.id));
+		expect(value(await account.acceptInvite(bo.user.id, brian.id))).toMatchObject({ role: 'editor' });
+		expect(await account.invites(bo.user.id)).toEqual([]);
+	});
+
+	it('disappear with the brian', async () => {
+		const ann = await person('ann');
+		const bo = await person('bo');
+		const brian = await brianOf(ann);
+		value(await account.addFriend(ann.user.id, bo.name));
+		value(await account.invite(ann.user.id, brian.id, bo.name, 'editor'));
+		value(await account.deleteBrian(ann.user.id, brian.id));
+		expect(await account.invites(bo.user.id)).toEqual([]);
+		expect(await account.acceptInvite(bo.user.id, brian.id)).toMatchObject({ ok: false });
 	});
 });

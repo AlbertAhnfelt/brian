@@ -16,6 +16,38 @@
 		brians are folders in <code>brian/</code> that other people are members of too.
 	</p>
 
+	{#if data.invites.length}
+		<section class="invites" aria-labelledby="invites">
+			<h2 id="invites">Invitations</h2>
+			<ul>
+				{#each data.invites as invite (invite.brianId)}
+					<li class="invite">
+						<div>
+							<strong>{invite.brianName}</strong>
+							<span class="muted">from {invite.from} · as {invite.role === 'editor' ? 'an editor' : 'a viewer'}</span>
+						</div>
+						<div class="answer">
+							<form method="post" action="?/accept" use:enhance>
+								<input type="hidden" name="brian" value={invite.brianId} />
+								<button class="button small">Accept</button>
+							</form>
+							<form method="post" action="?/decline" use:enhance>
+								<input type="hidden" name="brian" value={invite.brianId} />
+								<button class="button ghost small">Decline</button>
+							</form>
+						</div>
+					</li>
+				{/each}
+			</ul>
+			<p class="muted small-print">
+				Accepting adds the brian as a folder in <code>brian/</code>, synced to your devices and visible to your agents.
+				{#if data.invites.some((i) => i.role === 'editor')}As an editor, anything you put in it reaches every member.{/if}
+			</p>
+			{#if form?.inviteMessage}<p class="error">{form.inviteMessage}</p>{/if}
+		</section>
+	{/if}
+	{#if form?.joined}<p class="notice">Joined. It's in your Brian at <code>brian/{form.joined}/</code>.</p>{/if}
+
 	<h2>Shared with you</h2>
 	{#if data.brians.length}
 		<ul>
@@ -27,7 +59,7 @@
 			{/each}
 		</ul>
 	{:else}
-		<p class="muted">None yet. Create one, or ask someone to add you to theirs.</p>
+		<p class="muted">None yet. Create one, or ask a friend to invite you to theirs.</p>
 	{/if}
 
 	<h2>New brian</h2>
@@ -118,6 +150,50 @@
 
 	.small-print {
 		font-size: 0.85rem;
+	}
+
+	.invites {
+		margin-top: 2rem;
+		padding: 0.25rem 1.25rem 0.75rem;
+		border: 1px solid var(--line);
+		border-radius: 1rem;
+		background: var(--surface);
+	}
+
+	.invites h2 {
+		margin-top: 1rem;
+	}
+
+	.invite {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem 1rem;
+		padding: 0.6rem 0;
+	}
+
+	.invite + .invite {
+		border-top: 1px solid var(--line);
+	}
+
+	.invite div:first-child {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.answer {
+		display: flex;
+		gap: 0.4rem;
+	}
+
+	.small {
+		padding: 0.3rem 0.9rem;
+		font-size: 0.9rem;
+	}
+
+	.notice {
+		margin-top: 1.5rem;
 	}
 
 	.error {
