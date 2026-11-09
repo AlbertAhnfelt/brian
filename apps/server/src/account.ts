@@ -1,7 +1,8 @@
 import { getOAuthApi } from '@cloudflare/workers-oauth-provider';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { oauthOptions } from './oauth';
-import type { AccountRpc, BrianSummary, BrianView, Connection, Outcome, Role, Visibility } from '@brian/shared';
+import type { AccountRpc, BrianSummary, BrianView, Connection, Outcome, Person, Role, Visibility } from '@brian/shared';
+import * as friends from './brian/friends';
 import * as members from './brian/members';
 import type { ExportedPage } from './vault/vault';
 
@@ -91,6 +92,22 @@ export class Account extends WorkerEntrypoint<Env> implements AccountRpc {
 
 	deleteBrian(userId: string, brianId: string): Promise<Outcome> {
 		return members.deleteBrian(this.env, userId, brianId);
+	}
+
+	findPerson(userId: string, query: string): Promise<Person | null> {
+		return friends.findPerson(this.env.DB, userId, query);
+	}
+
+	friends(userId: string): Promise<string[]> {
+		return friends.friendsOf(this.env.DB, userId);
+	}
+
+	addFriend(userId: string, username: string): Promise<Outcome> {
+		return friends.addFriend(this.env.DB, userId, username);
+	}
+
+	removeFriend(userId: string, username: string): Promise<Outcome> {
+		return friends.removeFriend(this.env.DB, userId, username);
 	}
 
 	private async grants(userId: string) {

@@ -17,6 +17,15 @@ export interface ExportedPage {
  * The server's `Account` RPC entrypoint, as the website calls it over the SERVER service binding.
  * The website passes the user ID from its own verified session.
  */
+/** Someone found by an exact username or email search. Never includes their email. */
+export interface Person {
+	username: string;
+	/** The search found the signed-in user themselves. */
+	you: boolean;
+	/** Already in the signed-in user's friends. */
+	friend: boolean;
+}
+
 export interface AccountRpc {
 	connections(userId: string): Promise<Connection[]>;
 	disconnect(userId: string, grantId: string): Promise<void>;
@@ -38,4 +47,10 @@ export interface AccountRpc {
 	join(userId: string, brianId: string): Promise<Outcome<BrianSummary>>;
 	leave(userId: string, brianId: string): Promise<Outcome>;
 	deleteBrian(userId: string, brianId: string): Promise<Outcome>;
+
+	// Friends: exact-match search by username or email, and a one-way list.
+	findPerson(userId: string, query: string): Promise<Person | null>;
+	friends(userId: string): Promise<string[]>;
+	addFriend(userId: string, username: string): Promise<Outcome>;
+	removeFriend(userId: string, username: string): Promise<Outcome>;
 }

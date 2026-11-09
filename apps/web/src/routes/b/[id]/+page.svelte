@@ -49,7 +49,10 @@
 
 		{#if owner}
 			<form method="post" action="?/add" use:enhance class="inline">
-				<input name="username" placeholder="username" autocapitalize="none" spellcheck="false" required />
+				<input name="username" placeholder="username" list="friends" autocapitalize="none" spellcheck="false" required />
+				<datalist id="friends">
+					{#each data.friends as friend (friend)}<option value={friend}></option>{/each}
+				</datalist>
 				<select name="role">
 					<option value="editor">editor</option>
 					<option value="viewer">viewer</option>

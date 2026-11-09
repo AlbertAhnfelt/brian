@@ -5,22 +5,37 @@ import { account } from '#lib/server/account.ts';
 import { enabledProviders } from '#lib/server/auth/index.ts';
 import type { Actions, PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
 	if (!locals.user) redirect(303, '/login?next=/account');
-	const [logins, connections] = await Promise.all([
+	// ?q= searches for a friend: an exact username or email address.
+	const query = (url.searchParams.get('q') ?? '').trim();
+	const [logins, connections, friends, found] = await Promise.all([
 		env.DB.prepare('SELECT provider, email FROM accounts WHERE user_id = ? ORDER BY created_at')
 			.bind(locals.user.id)
 			.all<{ provider: string; email: string }>(),
-		account().connections(locals.user.id)
+		account().connections(locals.user.id),
+		account().friends(locals.user.id),
+		query ? account().findPerson(locals.user.id, query) : null
 	]);
 	const linked = new Set(logins.results.map((l) => l.provider));
 	const addable = enabledProviders(env)
 		.filter((p) => !linked.has(p.id))
 		.map(({ id, label }) => ({ id, label }));
-	return { logins: logins.results, addable, connections };
+	return { logins: logins.results, addable, connections, friends, query, found };
 };
 
 export const actions: Actions = {
+	addFriend: async ({ locals, request }) => {
+		if (!locals.user) redirect(303, '/login?next=/account');
+		const result = await account().addFriend(locals.user.id, String((await request.formData()).get('username') ?? ''));
+		if (!result.ok) return fail(400, { friendMessage: result.message });
+	},
+
+	removeFriend: async ({ locals, request }) => {
+		if (!locals.user) redirect(303, '/login?next=/account');
+		await account().removeFriend(locals.user.id, String((await request.formData()).get('username') ?? ''));
+	},
+
 	disconnect: async ({ locals, request }) => {
 		if (!locals.user) redirect(303, '/login?next=/account');
 		const grantId = String((await request.formData()).get('grantId') ?? '');

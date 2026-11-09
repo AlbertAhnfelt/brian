@@ -24,6 +24,48 @@
 		<p>You haven't picked one yet. <a href="/welcome?next=/account">Pick a username</a> to finish setting up your Brian.</p>
 	{/if}
 
+	<h2>Friends</h2>
+	<p>Find someone by their exact username or email address. Friends are easy to add to your shared brians.</p>
+	<form method="get" class="search" data-sveltekit-keepfocus data-sveltekit-noscroll>
+		<input name="q" value={data.query} placeholder="username or email" autocapitalize="none" spellcheck="false" />
+		<button class="button ghost">Search</button>
+	</form>
+	{#if data.query}
+		{#if data.found}
+			<div class="row person">
+				<span class="ink">{data.found.username}</span>
+				{#if data.found.you}
+					<span class="muted">That's you.</span>
+				{:else if data.found.friend}
+					<span class="muted">Already a friend.</span>
+				{:else}
+					<form method="post" action="?/addFriend" use:enhance>
+						<input type="hidden" name="username" value={data.found.username} />
+						<button class="button small">Add friend</button>
+					</form>
+				{/if}
+			</div>
+		{:else}
+			<p class="muted person">No users.</p>
+		{/if}
+	{/if}
+	{#if form?.friendMessage}<p class="error">{form.friendMessage}</p>{/if}
+	{#if data.friends.length}
+		<ul>
+			{#each data.friends as friend (friend)}
+				<li class="row">
+					<span class="ink">{friend}</span>
+					<form method="post" action="?/removeFriend" use:enhance>
+						<input type="hidden" name="username" value={friend} />
+						<button class="button ghost small">remove</button>
+					</form>
+				</li>
+			{/each}
+		</ul>
+	{:else}
+		<p class="muted">No friends added yet.</p>
+	{/if}
+
 	<h2>Logins</h2>
 	<ul>
 		{#each data.logins as login (login.provider)}
@@ -127,6 +169,20 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.5rem;
+	}
+
+	.search {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
+	.person {
+		margin: 0.75rem 0;
+		padding: 0.6rem 0.9rem;
+		border: 1px solid var(--line);
+		border-radius: 0.5rem;
+		background: var(--surface);
 	}
 
 	.delete {

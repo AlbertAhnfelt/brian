@@ -8,7 +8,10 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	// Private brians look the same as missing ones to non-members.
 	const view = await account().viewBrian(locals.user.id, params.id);
 	if (!view) error(404, 'No such brian.');
-	return { view };
+	// Friends not yet in the brian, suggested when adding members.
+	const inside = new Set(view.member ? view.members.map((m) => m.username) : []);
+	const friends = view.member && view.brian.role === 'owner' ? (await account().friends(locals.user.id)).filter((f) => !inside.has(f)) : [];
+	return { view, friends };
 };
 
 /** Runs a membership change as the signed-in user. The server checks their role. */
