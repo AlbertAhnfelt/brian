@@ -3,6 +3,9 @@ import { requestUrl } from 'obsidian';
 /** Where Brian sends the browser back after sign-in: Obsidian's own URL scheme. */
 export const REDIRECT_URI = 'obsidian://brian-auth';
 
+/** Brian no longer accepts this sign-in: the user has to sign in again. */
+export class SignedOut extends Error {}
+
 export interface Tokens {
 	access: string;
 	refresh: string | null;
@@ -76,7 +79,7 @@ export async function finishSignIn(server: string, pending: PendingSignIn, param
 
 /** A fresh access token from the refresh token. */
 export async function refresh(server: string, clientId: string, tokens: Tokens): Promise<Tokens> {
-	if (!tokens.refresh) throw new Error('Signed out: sign in to Brian again.');
+	if (!tokens.refresh) throw new SignedOut('Signed out: sign in to Brian again.');
 	const fresh = await token(server, { grant_type: 'refresh_token', refresh_token: tokens.refresh, client_id: clientId, resource: `${server}/mcp` });
 	// Keep the old refresh token if the server didn't rotate it.
 	return { ...fresh, refresh: fresh.refresh ?? tokens.refresh };
@@ -90,7 +93,9 @@ async function token(server: string, form: Record<string, string>): Promise<Toke
 		body: new URLSearchParams(form).toString(),
 		throw: false
 	});
-	if (response.status >= 300) throw new Error(`Signed out: sign in to Brian again (${response.status}).`);
+	// 400/401: the grant is gone (revoked, expired). Anything else is the server having trouble.
+	if (response.status === 400 || response.status === 401) throw new SignedOut('Signed out: sign in to Brian again.');
+	if (response.status >= 300) throw new Error(`Brian answered ${response.status}.`);
 	const json = response.json as { access_token: string; refresh_token?: string; expires_in?: number };
 	return {
 		access: json.access_token,

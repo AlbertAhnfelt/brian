@@ -13,8 +13,8 @@ const TYPING_MS = 2500;
 export class VaultFiles implements LocalFiles {
 	constructor(
 		private app: App,
-		/** "" or "brian/<mount>/". */
-		readonly root: string,
+		/** "" or "brian/<mount>/". Changes when the user renames a shared brian's folder. */
+		public root: string,
 		/** Folders inside the root that belong to other brians ("brian/acme/"). */
 		private excluded: () => string[],
 		/** Vault path → time of the last keystroke in it. */
