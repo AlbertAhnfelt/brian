@@ -13,6 +13,21 @@ dist/
 .env.*
 !.env.example
 .dev.vars
+.dev.vars.*
+!.dev.vars.example
+# Keys (Apple's sign-in key comes as a .p8)
+*.p8
+*.pem
+*.key
+
+# Exports downloaded from a Brian
+brian-*.zip
+
+# Obsidian plugin settings (holds sign-in tokens) when testing in a vault inside the repo
+apps/obsidian/data.json
+
+# Local tool settings
+.claude/settings.local.json
 
 # OS / editor
 .DS_Store
