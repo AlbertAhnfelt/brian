@@ -50,9 +50,9 @@
 				{ "pattern": "mybrian.dev/.well-known/oauth-*", "zone_name": "mybrian.dev" },
 				{ "pattern": "mybrian.dev/sync/*", "zone_name": "mybrian.dev" }
 			],
-			"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "REPLACE_WITH_PROD_KV_ID" }],
+			"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "64ae2646313f4db381209f51e270d235" }],
 			"d1_databases": [
-				{ "binding": "DB", "database_name": "brian-prod", "database_id": "REPLACE_WITH_PROD_D1_ID", "migrations_dir": "migrations" }
+				{ "binding": "DB", "database_name": "brian-prod", "database_id": "a4b58792-379a-4b21-af46-ef942f5fd762", "migrations_dir": "migrations" }
 			]
 		}
 	}

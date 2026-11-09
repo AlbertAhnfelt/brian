@@ -33,7 +33,7 @@
 		"prod": {
 			"vars": { "RESTRICT_LOGIN": "false" },
 			"routes": [{ "pattern": "mybrian.dev/*", "zone_name": "mybrian.dev" }],
-			"d1_databases": [{ "binding": "DB", "database_name": "brian-prod", "database_id": "REPLACE_WITH_PROD_D1_ID" }],
+			"d1_databases": [{ "binding": "DB", "database_name": "brian-prod", "database_id": "a4b58792-379a-4b21-af46-ef942f5fd762" }],
 			"services": [{ "binding": "SERVER", "service": "brian-server-prod", "entrypoint": "Account" }]
 		}
 	}
