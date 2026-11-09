@@ -65,7 +65,7 @@ export type Request =
 
 // Server → device.
 export type Reply =
-	| { t: 'ok'; ref: number; seq?: number; path?: string; changes?: FeedEntry[]; cursor?: number; more?: boolean; pages?: PulledPage[] }
+	| { t: 'ok'; ref: number; seq?: number; path?: string; changes?: FeedEntry[]; cursor?: number; more?: boolean; head?: number; pages?: PulledPage[] }
 	| { t: 'error'; ref: number; code: ErrorCode; message: string }
 	/**
 	 * A page changed (created, edited, moved or restored). Payload, when there is one: the Yjs

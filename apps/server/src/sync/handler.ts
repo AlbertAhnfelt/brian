@@ -1,4 +1,5 @@
 import type { SyncBrian, SyncSession } from '@brian/sync';
+import { setMount } from '../brian/members';
 import { Brian } from '../brian/router';
 import type { Props } from '../props';
 
@@ -32,6 +33,14 @@ export async function syncSession(request: Request, env: Env, props: Props): Pro
 		}))
 	]);
 	return Response.json({ username: brian.username, brians } satisfies SyncSession, { headers: { 'Cache-Control': 'no-store' } });
+}
+
+/** POST /mcp/sync/mount {brian, mount}: the user renamed a shared brian's folder in Obsidian. */
+export async function syncMount(request: Request, env: Env, props: Props): Promise<Response> {
+	const body = (await request.json().catch(() => null)) as { brian?: unknown; mount?: unknown } | null;
+	if (typeof body?.brian !== 'string' || typeof body.mount !== 'string') return Response.json({ error: 'Send "brian" and "mount".' }, { status: 400 });
+	const outcome = await setMount(env, props.userId, body.brian, body.mount);
+	return outcome.ok ? Response.json({ mount: outcome.value }) : Response.json({ error: outcome.message }, { status: 409 });
 }
 
 /** GET /sync/socket?ticket=<brian>.<secret>: hands the WebSocket to that brian's Durable Object, which checks the ticket. */

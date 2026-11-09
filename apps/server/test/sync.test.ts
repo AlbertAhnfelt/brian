@@ -128,6 +128,25 @@ describe('sync tickets', () => {
 		expect(await one('b_00000000-0000-0000-0000-000000000000')).toEqual([]);
 	});
 
+	it('let a member rename where a shared brian appears in their own Brian, and only theirs', async () => {
+		const ann = await person('ann');
+		const bo = await person('bo');
+		const shared = value(await account.createBrian(ann.user.id, 'acme', 'private')) as BrianSummary;
+		value(await account.addMember(ann.user.id, shared.id, bo.name, 'editor'));
+		await tool(ann.token, 'write_page', { path: 'brian/mine/a.md', content: 'own' });
+		const rename = (token: string, mount: string, brian = shared.id) =>
+			call('/mcp/sync/mount', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ brian, mount }) });
+		expect((await rename(ann.token, 'work')).status).toBe(200);
+		expect((await session(ann.token)).brians.find((b) => b.id === shared.id)!.mount).toBe('work');
+		expect((await session(bo.token)).brians.find((b) => b.id === shared.id)!.mount).toBe('acme');
+		// Agents follow the new folder.
+		await tool(ann.token, 'write_page', { path: 'brian/work/b.md', content: 'shared' });
+		expect((await tool(bo.token, 'read_page', { path: 'brian/acme/b.md' })).text).toContain('shared');
+		for (const bad of ['Not Valid!', ann.name, 'mine']) expect((await rename(ann.token, bad)).status).toBe(409);
+		expect((await rename(ann.token, 'x', 'b_00000000-0000-0000-0000-000000000000')).status).toBe(409);
+		expect((await call('/mcp/sync/mount', { method: 'POST', body: '{}' })).status).toBe(401);
+	});
+
 	it('lets the Obsidian plugin sign in with an obsidian:// redirect', async () => {
 		const redirect = 'obsidian://brian-auth';
 		const registered = await call('/oauth/register', {

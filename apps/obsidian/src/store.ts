@@ -30,15 +30,20 @@ export class IdbStore implements SyncStore {
 		await done(indexedDB.deleteDatabase(name));
 	}
 
-	async load(): Promise<{ cursor: number; pages: PageRecord[]; tombstones: Tombstone[] }> {
+	async load(): Promise<{ cursor: number; pages: PageRecord[]; tombstones: Tombstone[]; client?: number }> {
 		const db = await this.db;
 		const tx = db.transaction([PAGES, TOMBSTONES, META], 'readonly');
-		const [pages, tombstones, cursor] = await Promise.all([
+		const [pages, tombstones, cursor, client] = await Promise.all([
 			done(tx.objectStore(PAGES).getAll() as IDBRequest<PageRecord[]>),
 			done(tx.objectStore(TOMBSTONES).getAll() as IDBRequest<Tombstone[]>),
-			done(tx.objectStore(META).get('cursor') as IDBRequest<number | undefined>)
+			done(tx.objectStore(META).get('cursor') as IDBRequest<number | undefined>),
+			done(tx.objectStore(META).get('client') as IDBRequest<number | undefined>)
 		]);
-		return { cursor: cursor ?? 0, pages, tombstones };
+		return { cursor: cursor ?? 0, pages, tombstones, client };
+	}
+
+	setClient(client: number): Promise<void> {
+		return this.write(META, (store) => store.put(client, 'client'));
 	}
 
 	putPage(page: PageRecord): Promise<void> {

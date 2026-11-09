@@ -613,7 +613,8 @@ export class Vault extends DurableObject<Env> {
 			if (!Number.isSafeInteger(since) || (since as number) < 0) throw new SyncError('bad-request', '"since" must be a change number.');
 			const { changes, cursor, more } = this.changes(since as number);
 			const entries: FeedEntry[] = changes.map(({ seq, id, path, deleted }) => ({ seq, id, path, deleted }));
-			return [{ changes: entries, cursor, more }];
+			// head: a device whose cursor is past it knows this brian was reset, and compares everything.
+			return [{ changes: entries, cursor, more, head: this.currentSeq() }];
 		}
 		if (header.t === 'pull') return this.pull(header.ids, payloads);
 		if (session.role === 'viewer') throw new SyncError('read-only', "You're a viewer of this brian, so your changes don't sync.");

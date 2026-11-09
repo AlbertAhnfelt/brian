@@ -220,6 +220,29 @@ export async function leave(env: Bindings, userId: string, brianId: string): Pro
 	return done;
 }
 
+/**
+ * Renames the folder a shared brian appears under in this user's own Brian (brian/<mount>/), as
+ * when they rename it in Obsidian. Only their own membership changes; nobody else's folder does.
+ */
+export async function setMount(env: Bindings, userId: string, brianId: string, input: string): Promise<Outcome<string>> {
+	const mine = await membership(env.DB, userId, brianId);
+	if (!mine) return no(NOT_FOUND);
+	const mount = normalizeName(input);
+	if (mount === mine.mount) return ok(mount);
+	if (!isValidName(mount)) return no(`Shared brians' folders are ${NAME_RULES}`);
+	if (mount === (await usernameOf(env.DB, userId))) return no('That folder is where your agents keep their notes.');
+	if ((await membershipsOf(env.DB, userId)).some((m) => m.mount === mount)) return no('Another shared brian already has that folder.');
+	const { folders, files } = await env.VAULT.getByName(userId).list(`brian/${mount}/`);
+	if (folders.length || files.length) return no(`brian/${mount}/ already holds notes of your own.`);
+	try {
+		await env.DB.prepare('UPDATE members SET mount = ? WHERE brian_id = ? AND user_id = ?').bind(mount, brianId, userId).run();
+	} catch (error) {
+		if (String(error).includes('UNIQUE')) return no('Another shared brian already has that folder.');
+		throw error;
+	}
+	return ok(mount);
+}
+
 /** Closes the user's sync sockets to a brian, so a new role (or none) applies at once. */
 async function kick(env: Bindings, brianId: string, userId: string): Promise<void> {
 	await env.VAULT.getByName(brianId).kick(userId);

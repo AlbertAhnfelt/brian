@@ -1,6 +1,7 @@
 import { BrianSync, type Connect, type LocalFiles, type PageRecord, type SyncSession, type SyncStore, type Tombstone } from '@brian/sync';
 import type { BrianSummary, Outcome } from '@brian/shared';
 import { exports } from 'cloudflare:workers';
+import * as Y from 'yjs';
 import { describe, expect, it } from 'vitest';
 import { call, connect as oauthConnect, signedInUser, tool } from './helpers';
 
@@ -33,10 +34,14 @@ class Files implements LocalFiles {
 
 class Store implements SyncStore {
 	cursor = 0;
+	client: number | undefined;
 	pages = new Map<string, PageRecord>();
 	tombstones = new Map<string, Tombstone>();
 	async load() {
-		return { cursor: this.cursor, pages: [...this.pages.values()], tombstones: [...this.tombstones.values()] };
+		return { cursor: this.cursor, pages: [...this.pages.values()], tombstones: [...this.tombstones.values()], client: this.client };
+	}
+	async setClient(client: number) {
+		this.client = client;
 	}
 	async putPage(page: PageRecord) {
 		this.pages.set(page.id, structuredClone(page));
@@ -79,6 +84,7 @@ class Device {
 	files = new Files();
 	store = new Store();
 	engine: BrianSync | null = null;
+	retry = [50];
 	constructor(
 		private token: string,
 		private readOnly = false,
@@ -90,7 +96,7 @@ class Device {
 			store: this.store,
 			connect: connector(this.token, this.brian),
 			readOnly: this.readOnly,
-			retryDelays: [50],
+			retryDelays: this.retry,
 			busyRetryMs: 20
 		});
 		await this.engine.start();
@@ -288,6 +294,64 @@ describe('the sync engine, with devices against the real server', () => {
 		const expected = { 'idea.md': 'from a', 'idea 2.md': 'from b' };
 		expect(Object.fromEntries(a.files.files)).toEqual(expected);
 		expect(Object.fromEntries(b.files.files)).toEqual(expected);
+	});
+});
+
+describe('hardening', () => {
+	it('syncs a page the server refused once it is renamed to a name it accepts', async () => {
+		const token = await user('ann');
+		const laptop = new Device(token);
+		await laptop.start();
+		await laptop.save('what?.md', 'x');
+		await quiet(laptop);
+		expect(laptop.engine!.status().problems.map((p) => p.path)).toEqual(['what?.md']);
+		laptop.files.files.delete('what?.md');
+		laptop.files.files.set('what-.md', 'x');
+		await laptop.engine!.fileRenamed('what?.md', 'what-.md');
+		await quiet(laptop);
+		expect(laptop.engine!.status().problems).toEqual([]);
+		expect(await read(token, 'what-.md')).toBe('x');
+	});
+
+	it('keeps one Yjs client per device across restarts, so pages do not grow with every launch', async () => {
+		const token = await user('ann');
+		const laptop = new Device(token);
+		for (let run = 0; run < 3; run++) {
+			await laptop.start();
+			await laptop.save('a.md', `run ${run}`);
+			await quiet(laptop);
+			await laptop.stop();
+		}
+		const [record] = [...laptop.store.pages.values()];
+		expect(Y.decodeStateVector(Y.encodeStateVectorFromUpdate(record.state)).size).toBe(1);
+	});
+
+	it('compares everything when the server is behind the device, and loses nothing', async () => {
+		const token = await user('ann');
+		const laptop = new Device(token);
+		await laptop.start();
+		await laptop.save('a.md', 'kept');
+		await quiet(laptop);
+		await laptop.stop();
+		laptop.store.cursor = 1_000_000; // As if the brian had been reset since.
+		await laptop.start();
+		await quiet(laptop);
+		expect(laptop.store.cursor).toBeLessThan(1_000_000);
+		expect(laptop.files.files.get('a.md')).toBe('kept');
+		await tool(token, 'write_page', { path: 'b.md', content: 'new' });
+		await quiet(laptop);
+		expect(laptop.files.files.get('b.md')).toBe('new');
+	});
+
+	it('syncs at once when asked, instead of waiting to reconnect', async () => {
+		const token = await user('ann');
+		const laptop = new Device(token);
+		laptop.retry = [60_000];
+		await laptop.start();
+		await quiet(laptop);
+		await tool(token, 'write_page', { path: 'c.md', content: 'now' });
+		await laptop.engine!.syncNow();
+		expect(laptop.files.files.get('c.md')).toBe('now');
 	});
 });
 

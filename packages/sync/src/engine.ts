@@ -49,7 +49,10 @@ export interface Tombstone {
 
 /** Where the engine keeps its state. The plugin uses IndexedDB; tests use memory. */
 export interface SyncStore {
-	load(): Promise<{ cursor: number; pages: PageRecord[]; tombstones: Tombstone[] }>;
+	/** `client`: this device's Yjs client id for the brian, if one was saved. */
+	load(): Promise<{ cursor: number; pages: PageRecord[]; tombstones: Tombstone[]; client?: number }>;
+	/** Saves the Yjs client id, so edits made in later runs don't each add a new client to every page. */
+	setClient?(client: number): Promise<void>;
 	putPage(page: PageRecord): Promise<void>;
 	deletePage(id: string): Promise<void>;
 	putTombstone(tombstone: Tombstone): Promise<void>;
@@ -144,6 +147,10 @@ export class BrianSync {
 	private wake: (() => void) | null = null;
 	private busyTimer: ReturnType<typeof setInterval> | null = null;
 	private state: SyncStatus['state'] = 'offline';
+	/** This device's Yjs client id for every page of the brian, kept across runs. */
+	private client = 0;
+	/** Cuts the wait before the next reconnection attempt short. */
+	private retryNow: (() => void) | null = null;
 
 	constructor(private options: SyncOptions) {}
 
@@ -151,9 +158,13 @@ export class BrianSync {
 	async start(): Promise<void> {
 		const saved = await this.options.store.load();
 		this.cursor = saved.cursor;
+		this.client = saved.client ?? 0;
+		if (!this.client) {
+			this.client = new Y.Doc().clientID;
+			await this.options.store.setClient?.(this.client);
+		}
 		for (const record of saved.pages) {
-			const doc = new Y.Doc();
-			Y.applyUpdate(doc, record.state);
+			const doc = this.doc(record.state);
 			const page: Page = { ...record, doc, held: [] };
 			this.pages.set(page.id, page);
 			this.paths.set(foldPath(page.path), page.id);
@@ -170,7 +181,27 @@ export class BrianSync {
 		if (this.busyTimer) clearInterval(this.busyTimer);
 		this.connection?.close();
 		this.wake?.();
+		this.retryNow?.();
 		await this.chain;
+	}
+
+	/** Syncs now: reconnects at once if offline, otherwise sends and fetches everything. */
+	syncNow(): Promise<void> {
+		if (!this.connection) {
+			this.retryNow?.();
+			return Promise.resolve();
+		}
+		return this.exclusive(async () => {
+			if (!this.connection) return;
+			this.setState('syncing');
+			try {
+				await this.flush();
+				await this.catchUp();
+				await this.flush();
+			} finally {
+				if (this.connection) this.setState('synced');
+			}
+		});
 	}
 
 	// ---- Local events, called by the plugin as files change ----
@@ -202,6 +233,7 @@ export class BrianSync {
 			if (this.options.readOnly) return;
 			this.repath(page, to);
 			page.moved = true;
+			page.refused = null; // A new name: try again.
 			this.pending.add(page.id);
 			await this.save(page);
 			this.flushSoon();
@@ -266,7 +298,7 @@ export class BrianSync {
 			return;
 		}
 		if (this.options.readOnly) return;
-		const doc = new Y.Doc();
+		const doc = this.doc();
 		doc.getText(TEXT).insert(0, text);
 		const created: Page = {
 			id: `p_${crypto.randomUUID()}`,
@@ -344,8 +376,7 @@ export class BrianSync {
 		if (!page) {
 			if (!update) return this.pullNow([id]);
 			if (this.tombstones.has(id)) return; // Deleted here; the delete is on its way.
-			const doc = new Y.Doc();
-			Y.applyUpdate(doc, update);
+			const doc = this.doc(update);
 			const text = doc.getText(TEXT).toString();
 			await this.makeRoom(path, text);
 			page = { id, path, doc, text, synced: Y.encodeStateVector(doc), dirty: false, unsent: false, moved: false, refused: null, held: [] };
@@ -471,7 +502,16 @@ export class BrianSync {
 			this.disconnected();
 			if (this.stopped) break;
 			this.setState('offline');
-			await new Promise((resolve) => setTimeout(resolve, delays[Math.min(attempt++, delays.length - 1)]));
+			await new Promise<void>((resolve) => {
+				const timer = setTimeout(done, delays[Math.min(attempt++, delays.length - 1)]);
+				const self = this;
+				function done() {
+					clearTimeout(timer);
+					self.retryNow = null;
+					resolve();
+				}
+				this.retryNow = done;
+			});
 		}
 	}
 
@@ -554,14 +594,31 @@ export class BrianSync {
 		this.seenDuringCatchUp = 0;
 		const latest = new Map<string, FeedEntry>();
 		let since = this.cursor;
+		let reset = false;
 		for (let more = true; more; ) {
 			const { header } = await this.request({ t: 'changes', since });
+			if (typeof header.head === 'number' && header.head < since) {
+				// The brian's feed is behind this device: it was reset. Compare everything from the start.
+				latest.clear();
+				since = this.cursor = 0;
+				reset = true;
+				continue;
+			}
 			for (const entry of header.changes as FeedEntry[]) latest.set(entry.id, entry);
 			since = header.cursor as number;
 			more = header.more === true;
 		}
 		for (const entry of latest.values()) if (entry.deleted) await this.applyGone(entry.id);
 		await this.pullNow([...latest.values()].filter((e) => !e.deleted).map((e) => e.id));
+		if (reset) {
+			// Pages the reset brian doesn't have: this device's copy may be the only one left, so send it.
+			for (const page of this.pages.values()) {
+				if (latest.has(page.id)) continue;
+				page.unsent = true;
+				this.pending.add(page.id);
+				await this.save(page);
+			}
+		}
 		this.catchingUp = false;
 		const cursor = Math.max(since, this.seenDuringCatchUp, this.cursor);
 		this.cursor = cursor;
@@ -688,6 +745,15 @@ export class BrianSync {
 	}
 
 	// ---- Bookkeeping ----
+
+	/** A page's Yjs document, using this device's client id for its own edits. */
+	private doc(state?: Uint8Array): Y.Doc {
+		const doc = new Y.Doc();
+		if (state) Y.applyUpdate(doc, state);
+		// After applying: a remote update with this client's own edits would otherwise make Yjs pick a new id.
+		if (this.client) doc.clientID = this.client;
+		return doc;
+	}
 
 	private byPath(path: string): Page | undefined {
 		const id = this.paths.get(foldPath(path));
