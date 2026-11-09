@@ -78,6 +78,10 @@ Local OAuth redirect URIs: `http://localhost:5173/login/google/callback` and `ht
 - **Cross-site form posts aren't blocked under `vite dev`.** SvelteKit's origin check only takes effect in a built app. A production build returns 403, so don't rely on the dev server for CSRF testing.
 - If the website seems to talk to old server code (stale data, missing logs), an old `wrangler dev` is probably still registered in Wrangler's dev registry. Stop it with `pkill -f "wrangler.js dev"` and run `pnpm dev` again.
 
+## Releasing the Obsidian plugin
+
+`pnpm release:plugin 0.2.0` (from a clean, pushed `main`) bumps the version in `apps/obsidian/`, commits, tags `0.2.0` (no `v`: Obsidian wants the bare version) and pushes. The tag starts `.github/workflows/release-plugin.yml`, which runs the checks and tests, builds the plugin, publishes a GitHub release with `main.js` and `manifest.json`, and only then copies `manifest.json` to the repo root, where Obsidian looks for the latest version. So Obsidian never sees a version whose release doesn't exist yet. Run it with the current version to release that version for the first time.
+
 ## License
 
 [AGPL-3.0](LICENSE). You may run and change Brian, but if you offer a modified version as a service, you must publish your changes under the same license.

@@ -11,6 +11,7 @@
 		"check": "pnpm -r check",
 		"build": "pnpm -r build",
 		"db:migrate": "pnpm --filter @brian/server db:migrate",
-		"test": "pnpm -r test"
+		"test": "pnpm -r test",
+		"release:plugin": "node scripts/release-plugin.mjs"
 	}
 }
