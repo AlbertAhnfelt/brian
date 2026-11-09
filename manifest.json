@@ -1,0 +1,10 @@
+{
+	"id": "brian",
+	"name": "Brian",
+	"version": "0.1.0",
+	"minAppVersion": "1.6.0",
+	"description": "Syncs your vault with your Brian, the second brain your AI agents can read and write.",
+	"author": "Albert Ahnfelt",
+	"authorUrl": "https://mybrian.dev",
+	"isDesktopOnly": false
+}
