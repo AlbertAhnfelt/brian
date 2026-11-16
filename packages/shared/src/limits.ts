@@ -6,8 +6,10 @@ export const LIMITS = {
 	/** Pages in one brian (personal or shared). Also keeps exports, built in memory, manageable. */
 	pagesPerBrian: 10_000,
 	/**
-	 * Size of one page, in UTF-8 bytes. Durable Object SQLite caps a row at 2 MB, and a page's text
-	 * shares its row (in pages, trash and the search index) with its path, so this stays ~10 KB under.
+	 * Size of one page, in UTF-8 bytes. Cloudflare documents a 2 MB row cap for Durable Object
+	 * SQLite, but on prod (probed 2026-11-16) a 5 MB value plus a max-length path stored fine and
+	 * 10 MB was refused (SQLITE_TOOBIG). Raising this also means checking MAX_STATE_BYTES and
+	 * PULL_BYTES in apps/server/src/vault/vault.ts.
 	 */
 	pageBytes: 1_990_000,
 	/** Length of a page path, in characters. */
