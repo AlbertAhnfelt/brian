@@ -187,7 +187,15 @@
 	.search {
 		display: flex;
 		flex-wrap: wrap;
+		align-items: stretch;
 		gap: 0.5rem;
+	}
+
+	/* Fields beside a pill button: the same height and shape. */
+	.search input {
+		padding: 0.65rem 1.1rem;
+		border-radius: 999px;
+		font-size: 0.95rem;
 	}
 
 	.person {

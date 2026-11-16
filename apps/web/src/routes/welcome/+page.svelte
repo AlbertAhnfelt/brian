@@ -29,7 +29,7 @@
 		<input
 			name="username"
 			value={form?.username ?? ''}
-			autocomplete="username"
+			autocomplete="off"
 			autocapitalize="none"
 			spellcheck="false"
 			required
