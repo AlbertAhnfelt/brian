@@ -10,7 +10,7 @@ Hosted at [mybrian.dev](https://mybrian.dev). Brian is early: expect rough edges
 - **The Obsidian plugin** syncs your vault with your Brian, live, across all your devices. Edits from several devices and agents merge instead of overwriting each other.
 - **`brian/` is where agents work.** `brian/<your username>/` is theirs to write in freely. Everything else in your vault is your own notes, which agents only edit when you ask them to.
 - **`BRIAN.md` files tell agents how to work.** The one at the root holds the rules every agent follows, `brian/BRIAN.md` holds what they've learned about you, and each shared brian has its own guide. Agents keep them up to date.
-- **Shared brians** are folders you share with friends, at `brian/<name>/`. Invite a friend as an editor (their changes reach everyone) or a viewer (read-only); they join once they accept. Public brians can be joined by anyone with the link, as viewers.
+- **Shared brians** are folders you share with other people, at `brian/<name>/`. Invite someone by username or email address as an editor (their changes reach everyone) or a viewer (read-only); they join once they accept. Public brians can be joined by anyone with the link, as viewers. Your agents can create, share and delete brians too, unless you turn that off on your account page. A deleted brian stays in the trash for 30 days.
 
 ## Get started
 
@@ -79,7 +79,7 @@ One origin serves everything. `/mcp`, `/authorize`, `/oauth/*`, `/sync/*` and `/
 A user's **Brian** is made of **brians**, each a folder of markdown pages with its own `Vault` Durable Object, so a request routed to one brian can never reach another's pages:
 
 - **Personal brian:** the vault root, plus `brian/<username>/`. Only its owner can see it, and it's never shared. Its Durable Object is named after the user ID.
-- **Shared brians:** mounted at `brian/<mount>/`, with members and invitations in D1. Each has exactly one owner, plus editors and viewers. Owners invite people from their friends list; nobody becomes a member without accepting. Its Durable Object is named after the brian ID (`b_<uuid>`).
+- **Shared brians:** mounted at `brian/<mount>/`, with members and invitations in D1. Each has exactly one owner, plus editors and viewers. Owners invite people by username or email (an address with no account yet waits in `email_invites` until someone signs in with it); nobody becomes a member without accepting. Deleting a brian moves it to the trash (`brians.deleted_at`, members in `deleted_members`) for 30 days; a daily cron purges it. Its Durable Object is named after the brian ID (`b_<uuid>`).
 
 On every MCP request, `src/brian/router.ts` loads the user's memberships and routes `brian/<mount>/…` to that brian's vault, with everything else going to the personal one. Roles are enforced there, in code, and pages from shared brians come labelled as such. The rules agents follow live in one place, `agentRules()` in `packages/shared/src/templates.ts`: they make up both the MCP server's instructions and the block Brian keeps current in each user's root `BRIAN.md`.
 

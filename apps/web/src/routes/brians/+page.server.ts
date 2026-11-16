@@ -5,8 +5,12 @@ import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	if (!locals.user) redirect(303, '/login?next=/brians');
-	const [brians, invites] = await Promise.all([account().brians(locals.user.id), account().invites(locals.user.id)]);
-	return { brians, invites, rules: NAME_RULES };
+	const [brians, invites, trashed] = await Promise.all([
+		account().brians(locals.user.id),
+		account().invites(locals.user.id),
+		account().deletedBrians(locals.user.id)
+	]);
+	return { brians, invites, trashed, rules: NAME_RULES };
 };
 
 export const actions: Actions = {
@@ -26,6 +30,14 @@ export const actions: Actions = {
 		const joined = await account().acceptInvite(locals.user.id, brianId);
 		if (!joined.ok) return fail(400, { inviteMessage: joined.message });
 		return { joined: joined.value.mount };
+	},
+
+	restore: async ({ locals, request }) => {
+		if (!locals.user) redirect(303, '/login?next=/brians');
+		const brianId = String((await request.formData()).get('brian') ?? '');
+		const restored = await account().restoreBrian(locals.user.id, brianId);
+		if (!restored.ok) return fail(400, { restoreMessage: restored.message });
+		return { restored: restored.value.mount };
 	},
 
 	decline: async ({ locals, request }) => {

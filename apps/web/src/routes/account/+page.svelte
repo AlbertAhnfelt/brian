@@ -99,6 +99,19 @@
 		<p class="muted">No apps yet. <a href="/connect">Connect one.</a></p>
 	{/if}
 
+	<h2>What agents can do</h2>
+	<p>
+		Connected apps can always read and write your pages. With this on, they can also do what you can on
+		<a href="/brians">Brians</a>: create shared brians, invite people, change or remove members, and delete brians (to the trash, for 30 days).
+	</p>
+	<form method="post" action="?/agents" use:enhance class="switch">
+		<label class="choice">
+			<input type="checkbox" name="allowed" checked={data.agentsManageBrians} onchange={(event) => event.currentTarget.form?.requestSubmit()} />
+			Let agents create, share and delete brians
+		</label>
+		<noscript><button class="button ghost small">Save</button></noscript>
+	</form>
+
 	<h2>Your data</h2>
 	<p><a href="/account/export" class="button ghost" data-sveltekit-reload>Export as zip</a></p>
 
@@ -207,6 +220,20 @@
 		border-radius: 0.5rem;
 		background: var(--surface);
 		font: inherit;
+	}
+
+	.choice {
+		flex-direction: row;
+		align-items: center;
+		gap: 0.6rem;
+		color: var(--ink);
+	}
+
+	.choice input {
+		width: 1.1rem;
+		height: 1.1rem;
+		padding: 0;
+		accent-color: var(--ink);
 	}
 
 	.danger {

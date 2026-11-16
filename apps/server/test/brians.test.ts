@@ -293,14 +293,21 @@ describe('setting up', () => {
 });
 
 describe('deleting', () => {
-	it('deleting a brian erases it for every member', async () => {
+	it('deleting a brian takes it away from every member, into the trash', async () => {
 		const ann = await person('ann');
 		const bo = await person('bo');
 		const brian = await brianOf(ann);
 		value(await addMember(ann.user.id, brian.id, bo.name, 'editor'));
+		await tool(ann.token, 'write_page', { path: 'brian/acme/plan.md', content: 'the plan' });
 		value(await account.deleteBrian(ann.user.id, brian.id));
+		expect(await account.brians(ann.user.id)).toEqual([]);
 		expect(await account.brians(bo.user.id)).toEqual([]);
-		expect(await env.VAULT.getByName(brian.id).list('')).toEqual({ folders: [], files: [] });
+		expect((await tool(bo.token, 'read_page', { path: 'brian/acme/plan.md' })).isError).toBe(true);
+		expect(await account.viewBrian(ann.user.id, brian.id)).toBeNull();
+		// The pages wait in its vault until the purge.
+		expect((await env.VAULT.getByName(brian.id).read('plan.md')).content).toBe('the plan');
+		expect(await account.deletedBrians(ann.user.id)).toMatchObject([{ id: brian.id, name: 'acme' }]);
+		expect(await account.deletedBrians(bo.user.id)).toEqual([]);
 	});
 
 	it("deleting an account erases the brians it owns and leaves the others", async () => {
@@ -320,21 +327,16 @@ describe('deleting', () => {
 });
 
 describe('invitations', () => {
-	it('only reach friends, and change nothing until accepted', async () => {
+	it('reach anyone by username, and change nothing until accepted', async () => {
 		const ann = await person('ann');
 		const bo = await person('bo');
 		const brian = await brianOf(ann);
 		await tool(ann.token, 'write_page', { path: 'brian/acme/plan.md', content: 'secret plan' });
 
-		// Not a friend yet: refused, with the same answer as for someone who doesn't exist.
-		const stranger = await account.invite(ann.user.id, brian.id, bo.name, 'editor');
-		const nobody = await account.invite(ann.user.id, brian.id, 'nobody-here', 'editor');
-		expect(stranger).toMatchObject({ ok: false });
-		expect(nobody).toEqual(stranger);
-
-		value(await account.addFriend(ann.user.id, bo.name));
-		value(await account.invite(ann.user.id, brian.id, bo.name, 'editor'));
+		// No friendship needed.
+		expect(value(await account.invite(ann.user.id, brian.id, bo.name, 'editor'))).toBe('account');
 		expect(await account.invite(ann.user.id, brian.id, bo.name, 'editor')).toMatchObject({ ok: false }); // Twice.
+		expect(await account.invite(ann.user.id, brian.id, 'nobody-here', 'editor')).toMatchObject({ ok: false, message: expect.stringContaining('email') });
 
 		// Invited, not in: no membership, no folder, no access.
 		expect(await account.brians(bo.user.id)).toEqual([]);
@@ -343,7 +345,7 @@ describe('invitations', () => {
 		expect(await account.viewBrian(bo.user.id, brian.id)).toBeNull();
 
 		expect(await account.invites(bo.user.id)).toMatchObject([{ brianId: brian.id, brianName: 'acme', role: 'editor', from: ann.name }]);
-		expect(await account.viewBrian(ann.user.id, brian.id)).toMatchObject({ invites: [{ username: bo.name, role: 'editor' }] });
+		expect(await account.viewBrian(ann.user.id, brian.id)).toMatchObject({ invites: [{ who: bo.name, role: 'editor' }] });
 
 		const joined = value(await account.acceptInvite(bo.user.id, brian.id));
 		expect(joined).toMatchObject({ id: brian.id, role: 'editor', mount: 'acme' });
@@ -377,7 +379,7 @@ describe('invitations', () => {
 		const brian = await brianOf(ann);
 		value(await addMember(ann.user.id, brian.id, bo.name, 'editor'));
 
-		// An editor can't invite, even their own friends.
+		// An editor can't invite anyone.
 		value(await account.addFriend(bo.user.id, cy.name));
 		expect(await account.invite(bo.user.id, brian.id, cy.name, 'editor')).toMatchObject({ ok: false });
 

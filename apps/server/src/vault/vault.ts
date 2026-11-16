@@ -569,8 +569,12 @@ export class Vault extends DurableObject<Env> {
 		return new Response(null, { status: 101, webSocket: client });
 	}
 
-	/** Closes a user's sockets, e.g. when they leave the brian or their role changes. */
-	kick(user: string): void {
+	/**
+	 * Closes a user's sockets, e.g. when they leave the brian or their role changes. With `revoke`,
+	 * also voids their unused tickets, so one issued just before the change can't open a socket after it.
+	 */
+	kick(user: string, revoke = false): void {
+		if (revoke) this.sql.exec(`DELETE FROM tickets WHERE user_id = ?`, user);
 		for (const ws of this.ctx.getWebSockets()) {
 			if ((ws.deserializeAttachment() as Session).user === user) ws.close(4003, 'Your membership changed. Reconnect.');
 		}

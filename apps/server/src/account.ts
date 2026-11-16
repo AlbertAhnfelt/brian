@@ -1,7 +1,7 @@
 import { getOAuthApi } from '@cloudflare/workers-oauth-provider';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { oauthOptions } from './oauth';
-import type { AccountRpc, BrianSummary, BrianView, Connection, Invite, Outcome, Person, Role, Visibility } from '@brian/shared';
+import type { AccountRpc, BrianSummary, BrianView, Connection, DeletedBrian, Invite, Invited, Outcome, Person, Role, Visibility } from '@brian/shared';
 import * as friends from './brian/friends';
 import * as members from './brian/members';
 import type { ExportedPage } from './vault/vault';
@@ -70,12 +70,12 @@ export class Account extends WorkerEntrypoint<Env> implements AccountRpc {
 		return members.setVisibility(this.env.DB, userId, brianId, visibility);
 	}
 
-	invite(userId: string, brianId: string, username: string, role: Exclude<Role, 'owner'>): Promise<Outcome> {
-		return members.invite(this.env, userId, brianId, username, role);
+	invite(userId: string, brianId: string, who: string, role: Exclude<Role, 'owner'>): Promise<Outcome<Invited>> {
+		return members.invite(this.env, userId, brianId, who, role);
 	}
 
-	cancelInvite(userId: string, brianId: string, username: string): Promise<Outcome> {
-		return members.cancelInvite(this.env, userId, brianId, username);
+	cancelInvite(userId: string, brianId: string, who: string): Promise<Outcome> {
+		return members.cancelInvite(this.env, userId, brianId, who);
 	}
 
 	invites(userId: string): Promise<Invite[]> {
@@ -108,6 +108,22 @@ export class Account extends WorkerEntrypoint<Env> implements AccountRpc {
 
 	deleteBrian(userId: string, brianId: string): Promise<Outcome> {
 		return members.deleteBrian(this.env, userId, brianId);
+	}
+
+	deletedBrians(userId: string): Promise<DeletedBrian[]> {
+		return members.deletedBrians(this.env.DB, userId);
+	}
+
+	restoreBrian(userId: string, brianId: string): Promise<Outcome<BrianSummary>> {
+		return members.restoreBrian(this.env, userId, brianId);
+	}
+
+	agentsManageBrians(userId: string): Promise<boolean> {
+		return members.agentsManageBrians(this.env.DB, userId);
+	}
+
+	setAgentsManageBrians(userId: string, allowed: boolean): Promise<void> {
+		return members.setAgentsManageBrians(this.env.DB, userId, allowed);
 	}
 
 	findPerson(userId: string, query: string): Promise<Person | null> {

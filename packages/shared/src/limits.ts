@@ -14,10 +14,12 @@ export const LIMITS = {
 	pageBytes: 1_990_000,
 	/** Length of a page path, in characters. */
 	pathLength: 512,
-	/** How long deleted pages stay in the trash. */
+	/** How long deleted pages, and deleted shared brians, stay in the trash. */
 	trashDays: 30,
 	/** Shared brians a user can be a member of, owner or not. Search asks each one, so keep it modest. */
 	sharedBriansPerUser: 50,
+	/** Invitations to one brian waiting for an answer (to accounts and to email addresses together). */
+	openInvitesPerBrian: 100,
 	/** Folder names tried for a new member (`acme`, `acme-2`, …) before giving up. */
 	folderNameAttempts: 20,
 	/** Most search hits returned at once. */

@@ -9,19 +9,20 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	if (!locals.user) redirect(303, '/login?next=/account');
 	// ?q= searches for a friend: an exact username or email address.
 	const query = (url.searchParams.get('q') ?? '').trim();
-	const [logins, connections, friends, found] = await Promise.all([
+	const [logins, connections, friends, found, agentsManageBrians] = await Promise.all([
 		env.DB.prepare('SELECT provider, email FROM accounts WHERE user_id = ? ORDER BY created_at')
 			.bind(locals.user.id)
 			.all<{ provider: string; email: string }>(),
 		account().connections(locals.user.id),
 		account().friends(locals.user.id),
-		query ? account().findPerson(locals.user.id, query) : null
+		query ? account().findPerson(locals.user.id, query) : null,
+		account().agentsManageBrians(locals.user.id)
 	]);
 	const linked = new Set(logins.results.map((l) => l.provider));
 	const addable = enabledProviders(env)
 		.filter((p) => !linked.has(p.id))
 		.map(({ id, label }) => ({ id, label }));
-	return { logins: logins.results, addable, connections, friends, query, found };
+	return { logins: logins.results, addable, connections, friends, query, found, agentsManageBrians };
 };
 
 export const actions: Actions = {
@@ -34,6 +35,11 @@ export const actions: Actions = {
 	removeFriend: async ({ locals, request }) => {
 		if (!locals.user) redirect(303, '/login?next=/account');
 		await account().removeFriend(locals.user.id, String((await request.formData()).get('username') ?? ''));
+	},
+
+	agents: async ({ locals, request }) => {
+		if (!locals.user) redirect(303, '/login?next=/account');
+		await account().setAgentsManageBrians(locals.user.id, (await request.formData()).get('allowed') === 'on');
 	},
 
 	disconnect: async ({ locals, request }) => {

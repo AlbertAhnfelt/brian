@@ -3,6 +3,8 @@
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
+
+	const date = (seconds: number) => new Date(seconds * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });
 </script>
 
 <svelte:head>
@@ -60,6 +62,23 @@
 		</ul>
 	{:else}
 		<p class="muted">None yet. Create one, or ask a friend to invite you to theirs.</p>
+	{/if}
+
+	{#if form?.restored}<p class="notice">Restored, with its members. It's back at <code>brian/{form.restored}/</code>.</p>{/if}
+	{#if data.trashed.length}
+		<h2>Recently deleted</h2>
+		<ul>
+			{#each data.trashed as brian (brian.id)}
+				<li class="row">
+					<span>{brian.name} <span class="muted">· erased on {date(brian.purgeAt)}</span></span>
+					<form method="post" action="?/restore" use:enhance>
+						<input type="hidden" name="brian" value={brian.id} />
+						<button class="button ghost small">Restore</button>
+					</form>
+				</li>
+			{/each}
+		</ul>
+		{#if form?.restoreMessage}<p class="error">{form.restoreMessage}</p>{/if}
 	{/if}
 
 	<h2>New brian</h2>

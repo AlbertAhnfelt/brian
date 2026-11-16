@@ -1,4 +1,4 @@
-import type { BrianSummary, BrianView, Invite, Outcome, Role, Visibility } from './brians';
+import type { BrianSummary, BrianView, DeletedBrian, Invite, Invited, Outcome, Role, Visibility } from './brians';
 
 /** A connected app (Claude, ChatGPT, …) as shown on the account page. */
 export interface Connection {
@@ -40,9 +40,13 @@ export interface AccountRpc {
 	viewBrian(userId: string, brianId: string): Promise<BrianView | null>;
 	createBrian(userId: string, name: string, visibility: Visibility): Promise<Outcome<BrianSummary>>;
 	setVisibility(userId: string, brianId: string, visibility: Visibility): Promise<Outcome>;
-	/** The owner invites a friend. They become a member only when they accept. */
-	invite(userId: string, brianId: string, username: string, role: Exclude<Role, 'owner'>): Promise<Outcome>;
-	cancelInvite(userId: string, brianId: string, username: string): Promise<Outcome>;
+	/**
+	 * The owner invites someone by username or email address. They become a member only when they
+	 * accept. An email with no account behind it waits until someone signs in with it.
+	 */
+	invite(userId: string, brianId: string, who: string, role: Exclude<Role, 'owner'>): Promise<Outcome<Invited>>;
+	/** Takes back an unanswered invitation, by username or by the email address invited. */
+	cancelInvite(userId: string, brianId: string, who: string): Promise<Outcome>;
 	/** Invitations waiting for this user's answer, newest first. */
 	invites(userId: string): Promise<Invite[]>;
 	acceptInvite(userId: string, brianId: string): Promise<Outcome<BrianSummary>>;
@@ -52,7 +56,16 @@ export interface AccountRpc {
 	/** "Sync to this brian": join a public brian as a viewer. */
 	join(userId: string, brianId: string): Promise<Outcome<BrianSummary>>;
 	leave(userId: string, brianId: string): Promise<Outcome>;
+	/** Moves the brian to the trash for LIMITS.trashDays, for every member. Owner only. */
 	deleteBrian(userId: string, brianId: string): Promise<Outcome>;
+	/** The brians this user deleted that are still in the trash, newest first. */
+	deletedBrians(userId: string): Promise<DeletedBrian[]>;
+	/** Brings a brian back from the trash, with its members. Owner only. */
+	restoreBrian(userId: string, brianId: string): Promise<Outcome<BrianSummary>>;
+
+	/** Whether the user's agents (MCP apps) may create, share, change and delete brians. */
+	agentsManageBrians(userId: string): Promise<boolean>;
+	setAgentsManageBrians(userId: string, allowed: boolean): Promise<void>;
 
 	// Friends: exact-match search by username or email, and a one-way list.
 	findPerson(userId: string, query: string): Promise<Person | null>;

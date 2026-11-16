@@ -13,10 +13,10 @@
 <h2>What we store</h2>
 <ul>
 	<li><strong>Your account:</strong> your email address, name and username, and an ID from each login provider you use (Google, GitHub or Apple).</li>
-	<li><strong>Your Brian:</strong> the pages you, your agents or the Obsidian plugin write to it, and the shared brians you're in. Deleted pages stay in a trash for 30 days, then they are erased.</li>
+	<li><strong>Your Brian:</strong> the pages you, your agents or the Obsidian plugin write to it, and the shared brians you're in. Deleted pages, and deleted shared brians, stay in a trash for 30 days, then they are erased.</li>
 	<li><strong>Edit history:</strong> for each page, who changed it, when, and with which app (for example "Claude" or "Obsidian"). Not the text of old versions.</li>
 	<li><strong>Your friends:</strong> the people you've added as friends.</li>
-	<li><strong>Invitations:</strong> who invited whom to which shared brian, until it's accepted, declined or cancelled.</li>
+	<li><strong>Invitations:</strong> who invited whom to which shared brian, until it's accepted, declined or cancelled. Someone invited by email address before they have an account has that address stored with the invitation; we don't email them, and the address is deleted when they sign in with it, the invitation is cancelled, or the brian is deleted.</li>
 	<li><strong>Sign-in data:</strong> website sessions and the access you grant to apps like Claude or ChatGPT. We store only fingerprints (hashes) of the secret tokens, never the tokens themselves.</li>
 	<li><strong>Basic logs:</strong> request logs kept briefly to keep the service running and find bugs.</li>
 </ul>

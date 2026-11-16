@@ -346,4 +346,47 @@ describe('shared brians', () => {
 		const editor = await Device.open(await ticketOf(bo.token));
 		expect((await editor.request({ t: 'push', id }, [Y.encodeStateAsUpdate(docOf('now allowed'))])).header.t).toBe('ok');
 	});
+	it("voids a removed member's unused tickets", async () => {
+		const ann = await person('ann');
+		const bo = await person('bo');
+		const brian = value(await account.createBrian(ann.user.id, 'club', 'private')) as BrianSummary;
+		value(await addMember(ann.user.id, brian.id, bo.name, 'editor'));
+		const ticket = (await session(bo.token)).brians.find((b) => b.id === brian.id)!.ticket;
+		value(await account.removeMember(ann.user.id, brian.id, bo.name));
+		const response = await call(`/sync/socket?ticket=${encodeURIComponent(ticket)}`, { headers: { Upgrade: 'websocket' } });
+		expect(response.status).toBe(401);
+	});
+
+	it('tells devices at once when their brians change, so Obsidian looks again', async () => {
+		const ann = await person('ann');
+		const bo = await person('bo');
+		const personalOf = async (token: string) => (await session(token)).brians.find((b) => b.id === null)!.ticket;
+		const waitClosed = async (device: Device) => {
+			for (let i = 0; i < 50 && device.closed === null; i++) await new Promise((r) => setTimeout(r, 10));
+			return device.closed;
+		};
+
+		// An agent creates a brian: the owner's devices are told.
+		let annDevice = await Device.open(await personalOf(ann.token));
+		expect((await tool(ann.token, 'create_brian', { name: 'club' })).isError).toBe(false);
+		expect(await waitClosed(annDevice)).toBe(4003);
+
+		// Accepting an invitation tells the new member's devices.
+		const brian = (await account.brians(ann.user.id))[0];
+		const boDevice = await Device.open(await personalOf(bo.token));
+		value(await account.invite(ann.user.id, brian.id, bo.name, 'editor'));
+		expect(boDevice.closed).toBeNull(); // An invitation alone changes nothing.
+		value(await account.acceptInvite(bo.user.id, brian.id));
+		expect(await waitClosed(boDevice)).toBe(4003);
+
+		// Deleting closes every member's socket to the brian; restoring tells their devices again.
+		const shared = await Device.open((await session(bo.token)).brians.find((b) => b.id === brian.id)!.ticket);
+		value(await account.deleteBrian(ann.user.id, brian.id));
+		expect(await waitClosed(shared)).toBe(4003);
+		const boAgain = await Device.open(await personalOf(bo.token));
+		annDevice = await Device.open(await personalOf(ann.token));
+		value(await account.restoreBrian(ann.user.id, brian.id));
+		expect(await waitClosed(boAgain)).toBe(4003);
+		expect(await waitClosed(annDevice)).toBe(4003);
+	});
 });

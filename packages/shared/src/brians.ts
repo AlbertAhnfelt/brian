@@ -23,9 +23,21 @@ export interface Member {
 
 /** An invitation the owner has sent and the person hasn't answered yet. */
 export interface SentInvite {
-	username: string;
+	/** Their username, or the email address invited when no account has that email yet. */
+	who: string;
 	role: Exclude<Role, 'owner'>;
 }
+
+/** A brian its owner deleted, in the trash until `purgeAt` (seconds). */
+export interface DeletedBrian {
+	id: string;
+	name: string;
+	deletedAt: number;
+	purgeAt: number;
+}
+
+/** How an invitation went out: to a user's account, or held for an email address until they sign in. */
+export type Invited = 'account' | 'email';
 
 /** An invitation waiting for the signed-in user to accept or decline. */
 export interface Invite {
