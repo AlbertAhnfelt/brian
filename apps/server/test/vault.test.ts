@@ -2,6 +2,7 @@ import { runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
+import { LIMITS } from '@brian/shared';
 import { failure } from './helpers';
 
 const vault = (name = crypto.randomUUID()) => env.VAULT.getByName(name);
@@ -116,7 +117,7 @@ describe('Vault', () => {
 	});
 
 	it('rejects pages over the size limit', async () => {
-		expect(await failure(vault().write('big.md', 'x'.repeat(1024 * 1024 + 1)))).toMatch(/at most/);
+		expect(await failure(vault().write('big.md', 'x'.repeat(LIMITS.pageBytes + 1)))).toMatch(/at most/);
 	});
 
 	it('exports everything and destroys everything', async () => {
@@ -140,14 +141,14 @@ describe('Vault hardening', () => {
 
 	it('refuses a replace_all that would blow up the page, without building it', async () => {
 		const v = vault();
-		await v.write('a.md', 'a'.repeat(1024 * 1024));
+		await v.write('a.md', 'a'.repeat(LIMITS.pageBytes));
 		expect(await failure(v.edit('a.md', 'a', 'b'.repeat(100_000), true))).toMatch(/at most/);
-		expect((await v.read('a.md')).content.length).toBe(1024 * 1024);
+		expect((await v.read('a.md')).content.length).toBe(LIMITS.pageBytes);
 	});
 
 	it('refuses multi-byte edits over the limit', async () => {
 		const v = vault();
-		await v.write('a.md', 'x'.repeat(400_000));
+		await v.write('a.md', 'x'.repeat(Math.floor(LIMITS.pageBytes / 2.5)));
 		await v.edit('a.md', 'x', 'é', true);
 		expect(await failure(v.edit('a.md', 'é', '日本', true))).toMatch(/at most/);
 	});

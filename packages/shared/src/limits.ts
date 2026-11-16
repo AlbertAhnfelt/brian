@@ -5,8 +5,11 @@
 export const LIMITS = {
 	/** Pages in one brian (personal or shared). Also keeps exports, built in memory, manageable. */
 	pagesPerBrian: 10_000,
-	/** Size of one page, in UTF-8 bytes. */
-	pageBytes: 1024 * 1024,
+	/**
+	 * Size of one page, in UTF-8 bytes. Durable Object SQLite caps a row at 2 MB, and a page's text
+	 * shares its row (in pages, trash and the search index) with its path, so this stays ~10 KB under.
+	 */
+	pageBytes: 1_990_000,
 	/** Length of a page path, in characters. */
 	pathLength: 512,
 	/** How long deleted pages stay in the trash. */

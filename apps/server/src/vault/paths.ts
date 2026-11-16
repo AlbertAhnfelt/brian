@@ -51,10 +51,10 @@ export function normalizePrefix(input = ''): string {
 export function checkSize(content: string, extraChars = 0): void {
 	// Cheap upper bound first (a UTF-16 unit is at most 3 UTF-8 bytes), so huge results are never built.
 	if (content.length + extraChars > LIMITS.pageBytes) {
-		throw new VaultError(`Pages can be at most ${LIMITS.pageBytes / 1024} KB.`);
+		throw new VaultError(`Pages can be at most ${(LIMITS.pageBytes / 1_000_000).toFixed(2)} MB.`);
 	}
 	if (extraChars === 0 && new TextEncoder().encode(content).length > LIMITS.pageBytes) {
-		throw new VaultError(`Pages can be at most ${LIMITS.pageBytes / 1024} KB.`);
+		throw new VaultError(`Pages can be at most ${(LIMITS.pageBytes / 1_000_000).toFixed(2)} MB.`);
 	}
 }
 
