@@ -138,7 +138,7 @@ export async function createServer(): Promise<McpServer> {
 		'move_page',
 		{
 			description:
-				'Move or rename a page, also between brians. The new path must end in .md. Fails if the destination already exists. To move or rename a whole folder within one brian, end both paths with "/" (e.g. "notes/old/" → "notes/new/").',
+				'Move or rename a page, also between brians. The new path must end in .md. Fails if the destination already exists. To move or rename a whole folder, end both paths with "/" (e.g. "notes/old/" → "notes/new/", or "notes/project/" → "brian/acme/project/"): one call moves every page in it, also between brians. Never move a folder page by page.',
 			inputSchema: z.object({ from: z.string().min(1), to: z.string().min(1) })
 		},
 		({ from, to }) =>

@@ -233,6 +233,44 @@ describe('one Brian across brians', () => {
 		expect((await tool(ann.token, 'read_page', { path: 'brian/acme/shared.md' })).text).toContain('ready to share');
 	});
 
+	it('moves whole folders between brians, and back', async () => {
+		const ann = await person('ann');
+		await brianOf(ann);
+		await tool(ann.token, 'write_page', { path: 'school/course/a.md', content: 'alpha' });
+		await tool(ann.token, 'write_page', { path: 'school/course/deep/b.md', content: 'beta' });
+		await tool(ann.token, 'write_page', { path: 'school/other.md', content: 'stays' });
+
+		expect((await tool(ann.token, 'move_page', { from: 'school/course/', to: 'brian/acme/course/' })).text).toBe('Moved 2 pages to brian/acme/course/');
+		expect((await tool(ann.token, 'read_page', { path: 'brian/acme/course/deep/b.md' })).text).toContain('beta');
+		expect((await tool(ann.token, 'read_page', { path: 'school/course/a.md' })).isError).toBe(true);
+		expect((await tool(ann.token, 'read_page', { path: 'school/other.md' })).text).toContain('stays');
+
+		// Back out, into the personal brian's root of a folder that already exists.
+		expect((await tool(ann.token, 'move_page', { from: 'brian/acme/course/', to: 'school/' })).text).toBe('Moved 2 pages to school/');
+		expect((await tool(ann.token, 'read_page', { path: 'school/a.md' })).text).toContain('alpha');
+	});
+
+	it('moves nothing between brians when a page would clash, and finishes an interrupted move', async () => {
+		const ann = await person('ann');
+		const brian = await brianOf(ann);
+		await tool(ann.token, 'write_page', { path: 'src/a.md', content: 'alpha' });
+		await tool(ann.token, 'write_page', { path: 'src/b.md', content: 'beta' });
+		await tool(ann.token, 'write_page', { path: 'brian/acme/dst/b.md', content: 'other' });
+
+		const refused = await tool(ann.token, 'move_page', { from: 'src/', to: 'brian/acme/dst/' });
+		expect(refused.isError).toBe(true);
+		expect(refused.text).toContain('Nothing was moved');
+		expect(refused.text).toContain('brian/acme/dst/b.md');
+		expect((await tool(ann.token, 'read_page', { path: 'brian/acme/dst/a.md' })).isError).toBe(true);
+
+		// As if a move had stopped after copying: the same content already there is skipped.
+		await env.VAULT.getByName(brian.id).delete('dst/b.md');
+		await env.VAULT.getByName(brian.id).write('dst/a.md', 'alpha');
+		expect((await tool(ann.token, 'move_page', { from: 'src/', to: 'brian/acme/dst/' })).text).toBe('Moved 2 pages to brian/acme/dst/');
+		expect((await tool(ann.token, 'read_page', { path: 'src/a.md' })).isError).toBe(true);
+		expect((await tool(ann.token, 'read_page', { path: 'brian/acme/dst/b.md' })).text).toContain('beta');
+	});
+
 	it("explains the layout to agents in the server's instructions", async () => {
 		const ann = await person('ann');
 		const bo = await person('bo');

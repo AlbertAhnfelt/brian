@@ -424,4 +424,30 @@ describe('folder moves', () => {
 		await v.write('Dest/c.md', 'c');
 		expect((await v.moveFolder('src', 'dest')).sort()).toEqual(['Dest/a.md', 'Dest/b.md']);
 	});
+
+	it('imports pages all or none, skipping ones already there with the same content', async () => {
+		const v = vault();
+		await v.write('in/same.md', 'same');
+		await v.write('in/other.md', 'mine');
+		expect(await failure(v.importPages([{ path: 'in/new.md', content: 'n' }, { path: 'in/other.md', content: 'theirs' }]))).toMatch(/already exists/);
+		expect(await failure(v.read('in/new.md'))).toMatch(/No page/);
+		expect(await v.importPages([{ path: 'In/new.md', content: 'n' }, { path: 'in/same.md', content: 'same' }])).toEqual({
+			created: ['in/new.md'],
+			skipped: ['in/same.md']
+		});
+	});
+
+	it('indexes a folder, and trashes pages only if unchanged', async () => {
+		const v = vault();
+		await v.write('f/a.md', 'a');
+		await v.write('f/deep/b.md', 'bb');
+		expect(await v.folderIndex('F/')).toEqual([
+			{ path: 'f/a.md', rel: 'a.md', bytes: 1 },
+			{ path: 'f/deep/b.md', rel: 'deep/b.md', bytes: 2 }
+		]);
+		const [a, b] = await v.readPages(['f/a.md', 'f/deep/b.md']);
+		await v.edit('f/deep/b.md', 'bb', 'changed');
+		expect(await v.trashPages([a!, b!, { path: 'f/gone.md', etag: 'x' }])).toEqual({ trashed: ['f/a.md'], kept: ['f/deep/b.md'] });
+		expect(await failure(v.read('f/a.md'))).toMatch(/No page/);
+	});
 });

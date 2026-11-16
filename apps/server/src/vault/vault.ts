@@ -41,6 +41,15 @@ export interface Page {
 /** A page in an export: no id, and trashed pages have no etag. */
 export type ExportedPage = Omit<Page, 'id'>;
 
+/** A page in a folder about to move to another brian. */
+export interface FolderEntry {
+	path: string;
+	/** The path inside the folder. */
+	rel: string;
+	/** Size of its content in UTF-8 bytes. */
+	bytes: number;
+}
+
 export interface Listing {
 	folders: string[];
 	files: string[];
@@ -413,14 +422,9 @@ export class Vault extends DurableObject<Env> {
 		this.commit(() => this.trashPage(this.read(path), by));
 	}
 
-	private trashPage(page: Page, by: Author): void {
+	private trashPage(page: Page, by: Author, prune = true): void {
 		{
-			const cutoff = Date.now() - LIMITS.trashDays * 24 * 60 * 60 * 1000;
-			this.sql.exec(`DELETE FROM trash WHERE deleted_at < ?`, cutoff);
-			// A trashed page keeps its Yjs state, so a late edit from another device can still bring it back.
-			this.sql.exec(
-				`DELETE FROM ystate WHERE page_id NOT IN (SELECT id FROM pages) AND page_id NOT IN (SELECT page_id FROM trash WHERE page_id IS NOT NULL)`
-			);
+			if (prune) this.pruneTrash();
 			this.sql.exec(`INSERT INTO trash (page_id, path, content, deleted_at) VALUES (?, ?, ?, ?)`, page.id, page.path, page.content, Date.now());
 			this.sql.exec(`DELETE FROM pages WHERE id = ?`, page.id);
 			this.sql.exec(`DELETE FROM pages_fts WHERE path = ?`, page.path);
@@ -435,6 +439,94 @@ export class Vault extends DurableObject<Env> {
 			this.record(page.id, 'delete', page.path, null, by);
 			this.emit({ t: 'gone', id: page.id, seq: this.currentSeq() });
 		}
+	}
+
+	/** Drops trash past LIMITS.trashDays, and Yjs state no page or trashed page needs any more. */
+	private pruneTrash(): void {
+		const cutoff = Date.now() - LIMITS.trashDays * 24 * 60 * 60 * 1000;
+		this.sql.exec(`DELETE FROM trash WHERE deleted_at < ?`, cutoff);
+		// A trashed page keeps its Yjs state, so a late edit from another device can still bring it back.
+		this.sql.exec(
+			`DELETE FROM ystate WHERE page_id NOT IN (SELECT id FROM pages) AND page_id NOT IN (SELECT page_id FROM trash WHERE page_id IS NOT NULL)`
+		);
+	}
+
+	// Moving a folder to another brian (see Brian.moveFolder): the router reads the folder here,
+	// imports it into the other brian's vault in chunks, then trashes the originals here.
+
+	/** Every page in a folder, without contents: its path, its path inside the folder, and its size. */
+	folderIndex(folder: string): FolderEntry[] {
+		const source = normalizePrefix(folder);
+		if (!source) throw new VaultError('Name a folder to move.');
+		const depth = source.split('/').length - 1;
+		const rows = this.sql
+			.exec<{ path: string; bytes: number }>(
+				`SELECT path, length(CAST(content AS BLOB)) AS bytes FROM pages WHERE substr(fold, 1, length(?1)) = ?1 ORDER BY path`,
+				foldPath(source)
+			)
+			.toArray();
+		if (!rows.length) throw new VaultError(`No folder at "${source}".`);
+		return rows.map((row) => ({ path: row.path, rel: row.path.split('/').slice(depth).join('/'), bytes: row.bytes }));
+	}
+
+	/** The pages at these paths, in order; null where there is none. */
+	readPages(paths: string[]): (Page | null)[] {
+		return paths.map((path) => this.find(normalizePath(path)));
+	}
+
+	/** SHA-256 of the content of each page at these paths, in order; null where there is none. */
+	async digests(paths: string[]): Promise<(string | null)[]> {
+		const contents = this.readPages(paths).map((page) => page?.content ?? null);
+		return Promise.all(contents.map((content) => (content === null ? null : sha256(content))));
+	}
+
+	/** How many more pages this brian has room for. */
+	spaceLeft(): number {
+		return LIMITS.pagesPerBrian - this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM pages`).one().n;
+	}
+
+	/**
+	 * Creates these pages, all or none. A page that already exists with the same content is skipped
+	 * (so running an interrupted copy again finishes it); with other content, nothing is written.
+	 */
+	importPages(pages: { path: string; content: string }[], by: Author = BRIAN): { created: string[]; skipped: string[] } {
+		return this.commit(() => {
+			const created: string[] = [];
+			const skipped: string[] = [];
+			for (const { path, content } of pages) {
+				const key = normalizePath(path);
+				const text = normalizeText(content);
+				checkSize(text);
+				const existing = this.find(key);
+				if (existing && existing.content === text) skipped.push(existing.path);
+				else if (existing) throw new VaultError(`"${existing.path}" already exists.`);
+				else {
+					const target = this.inExistingFolders(key);
+					this.checkCanCreate(target);
+					created.push(this.create(target, text, by).path);
+				}
+			}
+			return { created, skipped };
+		});
+	}
+
+	/** Trashes these pages, all in one change, except any that changed since `etag` (kept, and listed). */
+	trashPages(pages: { path: string; etag: string }[], by: Author = BRIAN): { trashed: string[]; kept: string[] } {
+		return this.commit(() => {
+			this.pruneTrash();
+			const trashed: string[] = [];
+			const kept: string[] = [];
+			for (const { path, etag } of pages) {
+				const page = this.find(normalizePath(path));
+				if (!page) continue; // Already gone: nothing to do.
+				if (page.etag !== etag) kept.push(page.path);
+				else {
+					this.trashPage(page, by, false);
+					trashed.push(page.path);
+				}
+			}
+			return { trashed, kept };
+		});
 	}
 
 	/**
