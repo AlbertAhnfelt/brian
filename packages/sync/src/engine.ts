@@ -73,6 +73,8 @@ export interface SyncStatus {
 	state: 'offline' | 'connecting' | 'syncing' | 'synced';
 	/** Pages that don't sync, and why. */
 	problems: { path: string; message: string }[];
+	/** Set while the brian is out of storage: local changes wait, and go once there's room. */
+	full: string | null;
 }
 
 export interface SyncOptions {
@@ -86,6 +88,8 @@ export interface SyncOptions {
 	retryDelays?: number[];
 	/** How often to retry writing to files that were busy, in ms. */
 	busyRetryMs?: number;
+	/** How long to wait before trying again while the brian is full, in ms. */
+	fullRetryMs?: number;
 }
 
 interface Page {
@@ -146,6 +150,9 @@ export class BrianSync {
 	private stopped = false;
 	private wake: (() => void) | null = null;
 	private busyTimer: ReturnType<typeof setInterval> | null = null;
+	/** Why local changes can't go up right now (the brian is full), or null. */
+	private full: string | null = null;
+	private fullTimer: ReturnType<typeof setTimeout> | null = null;
 	private state: SyncStatus['state'] = 'offline';
 	/** This device's Yjs client id for every page of the brian, kept across runs. */
 	private client = 0;
@@ -179,6 +186,7 @@ export class BrianSync {
 	async stop(): Promise<void> {
 		this.stopped = true;
 		if (this.busyTimer) clearInterval(this.busyTimer);
+		if (this.fullTimer) clearTimeout(this.fullTimer);
 		this.connection?.close();
 		this.wake?.();
 		this.retryNow?.();
@@ -279,7 +287,7 @@ export class BrianSync {
 
 	status(): SyncStatus {
 		const problems = [...this.pages.values()].filter((p) => p.refused).map((p) => ({ path: p.path, message: p.refused! }));
-		return { state: this.state, problems };
+		return { state: this.state, problems, full: this.full };
 	}
 
 	// ---- Applying local changes ----
@@ -649,6 +657,15 @@ export class BrianSync {
 		}
 	}
 
+	/** While the brian is full, tries again now and then: pages deleted elsewhere may have made room. */
+	private retryWhenFull(): void {
+		if (this.fullTimer || this.stopped) return;
+		this.fullTimer = setTimeout(() => {
+			this.fullTimer = null;
+			this.flushSoon();
+		}, this.options.fullRetryMs ?? 5 * 60 * 1000);
+	}
+
 	private flushSoon(): void {
 		if (this.connection && !this.catchingUp && !this.options.readOnly) void this.exclusive(() => this.flush());
 	}
@@ -670,6 +687,7 @@ export class BrianSync {
 			this.tombstones.delete(id);
 			await this.options.store.deleteTombstone(id);
 		}
+		this.full = null;
 		for (const id of [...this.pending]) {
 			const page = this.pages.get(id);
 			if (!page) {
@@ -681,6 +699,12 @@ export class BrianSync {
 				this.pending.delete(id);
 			} catch (error) {
 				if (!(error instanceof RequestError) || error.code === 'disconnected') throw error;
+				if (error.code === 'full') {
+					// Out of storage: everything still pending waits, and is tried again later.
+					this.full = error.message;
+					this.retryWhenFull();
+					break;
+				}
 				if (error.code === 'refused' || error.code === 'bad-request') {
 					page.refused = error.message;
 					this.pending.delete(id);

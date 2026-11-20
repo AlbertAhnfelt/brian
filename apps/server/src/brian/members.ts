@@ -141,6 +141,16 @@ export async function createBrian(env: Bindings, userId: string, input: string, 
 	if (!isValidName(name)) return no(`Brian names are ${NAME_RULES}`);
 	if (visibility !== 'private' && visibility !== 'public') return no('Unknown visibility.');
 	if (!(await usernameOf(env.DB, userId))) return no('Choose a username first.');
+	// Brians in the trash count too: restoring one must never take a user past the limit.
+	const owned = await env.DB.prepare(
+		`SELECT (SELECT COUNT(*) FROM members WHERE user_id = ?1 AND role = 'owner')
+		      + (SELECT COUNT(*) FROM deleted_members WHERE user_id = ?1 AND role = 'owner') AS n`
+	)
+		.bind(userId)
+		.first<number>('n');
+	if ((owned ?? 0) >= LIMITS.ownedBriansPerUser) {
+		return no(`You can own at most ${LIMITS.ownedBriansPerUser} shared brians, counting the ones in the trash. Delete one you don't need first.`);
+	}
 	const id = `b_${crypto.randomUUID()}`;
 	await env.DB.prepare('INSERT INTO brians (id, name, visibility) VALUES (?, ?, ?)').bind(id, name, visibility).run();
 	const joined = await insertMember(env, { id, name }, userId, 'owner');
@@ -549,7 +559,10 @@ export async function purgeDeletedBrians(env: Bindings, at = now()): Promise<num
 				.run();
 			if (!marked.meta.changes) continue; // Restored meanwhile.
 			await env.VAULT.getByName(id).destroy();
-			await env.DB.prepare('DELETE FROM brians WHERE id = ? AND deleted_at = ?').bind(id, PURGING).run();
+			await env.DB.batch([
+				env.DB.prepare('DELETE FROM brians WHERE id = ? AND deleted_at = ?').bind(id, PURGING),
+				env.DB.prepare('DELETE FROM storage WHERE vault = ?').bind(id)
+			]);
 			purged++;
 		} catch (error) {
 			console.error(`purging ${id} failed`, (error as Error).message);
@@ -565,6 +578,7 @@ async function destroyBrian(env: Bindings, brianId: string): Promise<void> {
 		env.DB.prepare('DELETE FROM brians WHERE id = ?').bind(brianId)
 	]);
 	await env.VAULT.getByName(brianId).destroy();
+	await env.DB.prepare('DELETE FROM storage WHERE vault = ?').bind(brianId).run();
 }
 
 /** Whether the user's agents may create, share, change and delete brians (the switch on /account). */

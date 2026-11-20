@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { getMcpAuthContext } from 'agents/mcp/server';
 import { env } from 'cloudflare:workers';
-import { LIMITS, type BrianSummary, type Outcome } from '@brian/shared';
+import { formatBytes, LIMITS, type BrianSummary, type Outcome } from '@brian/shared';
 import { z } from 'zod';
 import * as friends from '../brian/friends';
 import * as members from '../brian/members';
@@ -105,13 +105,13 @@ export async function createServer(): Promise<McpServer> {
 		'write_page',
 		{
 			description:
-				`Create a page, or fully overwrite one. Pages are markdown: paths must end in .md, are case-insensitive, and must be valid file names on any device (no \\ : * ? \" < > |, no leading dot); each brian holds up to ${LIMITS.pagesPerBrian.toLocaleString('en-US')} pages. Shared brians you view are read-only. To create: omit expected_etag (fails if the page exists). To overwrite: pass the etag from read_page (fails if the page changed since; re-read and retry). For small changes prefer edit_page.`,
+				`Create a page, or fully overwrite one. Pages are markdown: paths must end in .md, are case-insensitive, and must be valid file names on any device (no \\ : * ? \" < > |, no leading dot); each brian holds up to ${LIMITS.pagesPerBrian.toLocaleString('en-US')} pages, and a user's Brian up to ${formatBytes(LIMITS.storageBytesPerUser)} in all. Shared brians you view are read-only. To create: omit expected_etag (fails if the page exists). To overwrite: pass the etag from read_page (fails if the page changed since; re-read and retry). For small changes prefer edit_page.`,
 			inputSchema: z.object({ path: z.string().min(1), content: z.string(), expected_etag: z.string().optional() })
 		},
 		({ path, content, expected_etag }) =>
 			run(async () => {
 				const page = await vault.write(path, content, expected_etag);
-				return `Saved ${page.path} (etag: ${page.etag})`;
+				return `Saved ${page.path} (etag: ${page.etag})${page.warning ? `\n\n${page.warning}` : ''}`;
 			})
 	);
 
@@ -130,7 +130,7 @@ export async function createServer(): Promise<McpServer> {
 		({ path, old_string, new_string, replace_all }) =>
 			run(async () => {
 				const page = await vault.edit(path, old_string, new_string, replace_all);
-				return `Edited ${page.path} (etag: ${page.etag})`;
+				return `Edited ${page.path} (etag: ${page.etag})${page.warning ? `\n\n${page.warning}` : ''}`;
 			})
 	);
 

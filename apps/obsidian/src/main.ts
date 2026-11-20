@@ -266,13 +266,15 @@ export default class BrianPlugin extends Plugin {
 	private async run(brian: SyncBrian): Promise<void> {
 		const key = keyOf(brian);
 		const files = new VaultFiles(this.app, this.rootOf(brian), () => (brian.id ? [] : this.mounts()), this.typing);
-		const running: Running = { brian, files, engine: null as unknown as BrianSync, status: { state: 'connecting', problems: [] } };
+		const running: Running = { brian, files, engine: null as unknown as BrianSync, status: { state: 'connecting', problems: [], full: null } };
 		running.engine = new BrianSync({
 			files,
 			store: new IdbStore(this.storeName(key)),
 			connect: this.connector(key, brian),
 			readOnly: brian.role === 'viewer',
 			onStatus: (status) => {
+				// Once per spell of being full, not on every retry.
+				if (status.full && !running.status.full) new Notice(`Brian: ${status.full} Your changes are kept and will sync once there's room.`, 0);
 				running.status = status;
 				this.tellRefusals(running);
 				this.render();
@@ -624,7 +626,8 @@ export default class BrianPlugin extends Plugin {
 				: states.some((s) => s !== 'synced')
 					? 'syncing'
 					: 'synced';
-		return `Brian: ${state}${problems ? ` (${problems} not syncing)` : ''}`;
+		const full = [...this.running.values()].some((r) => r.status.full);
+		return `Brian: ${full ? 'full, changes waiting' : state}${problems ? ` (${problems} not syncing)` : ''}`;
 	}
 
 	problems(): { path: string; message: string }[] {

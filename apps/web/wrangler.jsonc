@@ -17,6 +17,12 @@
 	// "true" limits sign-in to the ALLOWED_EMAILS secret (comma-separated). Only dev is restricted.
 	"vars": { "RESTRICT_LOGIN": "false" },
 
+	// Rate limits per minute (src/hooks.server.ts): sign-in per IP, form posts per user.
+	// Generous locally; dev and prod have the real numbers.
+	"ratelimits": [
+		{ "name": "LOGIN_LIMITER", "namespace_id": "1011", "simple": { "limit": 100000, "period": 60 } },
+		{ "name": "ACTION_LIMITER", "namespace_id": "1012", "simple": { "limit": 100000, "period": 60 } }
+	],
 	// Shared with apps/server, which owns the schema.
 	"d1_databases": [{ "binding": "DB", "database_name": "brian-local", "database_id": "local-brian-db" }],
 	// Account management RPC on apps/server (connected apps, export, deletion).
@@ -27,12 +33,20 @@
 			// Everything on the host goes here, except the OAuth/MCP paths routed to brian-server-dev.
 			"vars": { "RESTRICT_LOGIN": "true" },
 			"routes": [{ "pattern": "dev.mybrian.dev/*", "zone_name": "mybrian.dev" }],
+			"ratelimits": [
+				{ "name": "LOGIN_LIMITER", "namespace_id": "2011", "simple": { "limit": 30, "period": 60 } },
+				{ "name": "ACTION_LIMITER", "namespace_id": "2012", "simple": { "limit": 120, "period": 60 } }
+			],
 			"d1_databases": [{ "binding": "DB", "database_name": "brian-dev", "database_id": "37a7eb4b-b045-4159-9ba9-593c9b2ea89e" }],
 			"services": [{ "binding": "SERVER", "service": "brian-server-dev", "entrypoint": "Account" }]
 		},
 		"prod": {
 			"vars": { "RESTRICT_LOGIN": "false" },
 			"routes": [{ "pattern": "mybrian.dev/*", "zone_name": "mybrian.dev" }],
+			"ratelimits": [
+				{ "name": "LOGIN_LIMITER", "namespace_id": "3011", "simple": { "limit": 30, "period": 60 } },
+				{ "name": "ACTION_LIMITER", "namespace_id": "3012", "simple": { "limit": 120, "period": 60 } }
+			],
 			"d1_databases": [{ "binding": "DB", "database_name": "brian-prod", "database_id": "a4b58792-379a-4b21-af46-ef942f5fd762" }],
 			"services": [{ "binding": "SERVER", "service": "brian-server-prod", "entrypoint": "Account" }]
 		}

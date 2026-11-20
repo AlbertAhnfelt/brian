@@ -21,6 +21,13 @@
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }],
 	// Daily purge of brians that have been in the trash too long. Triggers aren't inherited either.
 	"triggers": { "crons": ["17 3 * * *"] },
+	// Rate limits per minute (src/limits.ts): MCP per user, sign-in and app registration per IP.
+	// Generous locally so tests never trip them; dev and prod have the real numbers.
+	"ratelimits": [
+		{ "name": "MCP_LIMITER", "namespace_id": "1001", "simple": { "limit": 100000, "period": 60 } },
+		{ "name": "AUTH_LIMITER", "namespace_id": "1002", "simple": { "limit": 100000, "period": 60 } },
+		{ "name": "REGISTER_LIMITER", "namespace_id": "1003", "simple": { "limit": 100000, "period": 60 } }
+	],
 	"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "local-oauth-kv" }],
 	"d1_databases": [
 		{ "binding": "DB", "database_name": "brian-local", "database_id": "local-brian-db", "migrations_dir": "migrations" }
@@ -38,6 +45,11 @@
 				{ "pattern": "dev.mybrian.dev/.well-known/oauth-*", "zone_name": "mybrian.dev" },
 				{ "pattern": "dev.mybrian.dev/sync/*", "zone_name": "mybrian.dev" }
 			],
+			"ratelimits": [
+				{ "name": "MCP_LIMITER", "namespace_id": "2001", "simple": { "limit": 600, "period": 60 } },
+				{ "name": "AUTH_LIMITER", "namespace_id": "2002", "simple": { "limit": 60, "period": 60 } },
+				{ "name": "REGISTER_LIMITER", "namespace_id": "2003", "simple": { "limit": 10, "period": 60 } }
+			],
 			"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "d0a482e451b245098fb39ba5fa660cc3" }],
 			"d1_databases": [
 				{ "binding": "DB", "database_name": "brian-dev", "database_id": "37a7eb4b-b045-4159-9ba9-593c9b2ea89e", "migrations_dir": "migrations" }
@@ -53,6 +65,11 @@
 				{ "pattern": "mybrian.dev/oauth/*", "zone_name": "mybrian.dev" },
 				{ "pattern": "mybrian.dev/.well-known/oauth-*", "zone_name": "mybrian.dev" },
 				{ "pattern": "mybrian.dev/sync/*", "zone_name": "mybrian.dev" }
+			],
+			"ratelimits": [
+				{ "name": "MCP_LIMITER", "namespace_id": "3001", "simple": { "limit": 600, "period": 60 } },
+				{ "name": "AUTH_LIMITER", "namespace_id": "3002", "simple": { "limit": 60, "period": 60 } },
+				{ "name": "REGISTER_LIMITER", "namespace_id": "3003", "simple": { "limit": 10, "period": 60 } }
 			],
 			"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "64ae2646313f4db381209f51e270d235" }],
 			"d1_databases": [

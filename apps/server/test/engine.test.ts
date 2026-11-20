@@ -1,6 +1,6 @@
 import { BrianSync, type Connect, type LocalFiles, type PageRecord, type SyncSession, type SyncStore, type Tombstone } from '@brian/sync';
-import type { BrianSummary, Outcome } from '@brian/shared';
-import { exports } from 'cloudflare:workers';
+import { LIMITS, type BrianSummary, type Outcome } from '@brian/shared';
+import { env, exports } from 'cloudflare:workers';
 import * as Y from 'yjs';
 import { describe, expect, it } from 'vitest';
 import { addMember, call, connect as oauthConnect, signedInUser, tool } from './helpers';
@@ -313,6 +313,26 @@ describe('hardening', () => {
 		await quiet(laptop);
 		expect(laptop.engine!.status().problems).toEqual([]);
 		expect(await read(token, 'what-.md')).toBe('x');
+	});
+
+	it('keeps changes while the Brian is full, and sends them once there is room', async () => {
+		const { user: owner, jar } = await signedInUser(`full-${crypto.randomUUID().slice(0, 6)}@example.com`);
+		const token = await oauthConnect(jar);
+		const vault = env.VAULT.getByName(owner.id);
+		await vault.setOthers(LIMITS.storageBytesPerUser);
+		const laptop = new Device(token);
+		await laptop.start();
+		await laptop.save('a.md', 'waiting');
+		await quiet(laptop);
+		expect(laptop.engine!.status().full).toMatch(/full/);
+		expect(laptop.engine!.status().problems).toEqual([]);
+		await vault.setOthers(0);
+		await laptop.save('b.md', 'next');
+		await quiet(laptop);
+		expect(laptop.engine!.status().full).toBeNull();
+		expect(await read(token, 'a.md')).toBe('waiting');
+		expect(await read(token, 'b.md')).toBe('next');
+		await laptop.stop();
 	});
 
 	it('keeps one Yjs client per device across restarts, so pages do not grow with every launch', async () => {

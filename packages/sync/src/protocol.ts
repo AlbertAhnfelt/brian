@@ -87,7 +87,9 @@ export type ErrorCode =
 	/** The page has edits the device never saw, so it wasn't deleted: `pull` it again. */
 	| 'changed'
 	/** The path or content broke a rule (size, path rules, page limit). Not retried. */
-	| 'refused';
+	| 'refused'
+	/** The owner's Brian is out of storage. Kept and retried later, once there's room. */
+	| 'full';
 
 /** Encodes a header and payloads into one frame: [header length: u32][header JSON][payloads…]. */
 export function encodeFrame(header: object, payloads: Uint8Array[] = []): Uint8Array {

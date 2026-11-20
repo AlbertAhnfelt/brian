@@ -27,5 +27,21 @@ export const LIMITS = {
 	/** Most changes returned by one change-feed call. */
 	changesPerCall: 1000,
 	/** How long a website login lasts. */
-	sessionDays: 30
+	sessionDays: 30,
+	/**
+	 * Storage per user: their personal brian plus the shared brians they own (trash included).
+	 * Counts page text, trash and sync state. Past it, writes that add data are refused.
+	 */
+	storageBytesPerUser: 3 * 1024 ** 3,
+	/** Agents are warned once a user's storage passes this share of storageBytesPerUser. */
+	storageWarnShare: 0.9,
+	/** Shared brians one user can own, the ones in the trash included. */
+	ownedBriansPerUser: 20
 } as const;
+
+/** A size for people: "2.7 GB", "512 MB". */
+export function formatBytes(bytes: number): string {
+	const gb = bytes / 1024 ** 3;
+	if (gb >= 1) return `${gb.toFixed(1).replace(/\.0$/, '')} GB`;
+	return `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`;
+}

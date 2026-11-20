@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { LIMITS, loginAllowed, withRules } from '@brian/shared';
+import { formatBytes, LIMITS, loginAllowed, withRules } from '@brian/shared';
 import {
 	applySplices,
 	decodeFrame,
@@ -36,6 +36,8 @@ export interface Page {
 	content: string;
 	etag: string;
 	updatedAt: number;
+	/** Set on a write when the owner's storage is nearly full: worth telling the user. */
+	warning?: string;
 }
 
 /** A page in an export: no id, and trashed pages have no etag. */
@@ -102,6 +104,8 @@ const TICKET_MS = 60 * 1000;
 const MAX_STATE_BYTES = 8 * 1024 * 1024;
 /** A pull answer stops adding pages past this many bytes; the rest are marked `later`. */
 const PULL_BYTES = 4 * 1024 * 1024;
+/** How soon after a write a brian reports its size to D1 (and learns its owner's total). */
+const REPORT_MS = 10 * 1000;
 
 /** A device connected over a WebSocket, as stored on its socket (survives hibernation). */
 interface Session {
@@ -120,6 +124,9 @@ class SyncError extends Error {
 		super(message);
 	}
 }
+/** A write refused because the owner's storage is full. Sync keeps it and tries again later. */
+export class StorageFull extends VaultError {}
+
 /** A replace_all with more matches than this is applied as one diff instead of one splice each. */
 const MAX_EXACT_SPLICES = 200;
 
@@ -314,7 +321,7 @@ export class Vault extends DurableObject<Env> {
 	 * from read; fails if the page changed since).
 	 */
 	write(path: string, content: string, expectedEtag?: string, by: Author = BRIAN): Page {
-		return this.commit(() => {
+		return this.warned(this.commit(() => {
 			const key = normalizePath(path);
 			const text = normalizeText(content);
 			checkSize(text);
@@ -330,12 +337,12 @@ export class Vault extends DurableObject<Env> {
 			const created = this.inExistingFolders(key);
 			this.checkCanCreate(created);
 			return this.create(created, text, by);
-		});
+		}));
 	}
 
 	/** Exact string replacement. `oldString` must match exactly once unless `replaceAll`. */
 	edit(path: string, oldText: string, newText: string, replaceAll = false, by: Author = BRIAN): Page {
-		return this.commit(() => {
+		return this.warned(this.commit(() => {
 			const page = this.read(path);
 			const oldString = normalizeText(oldText);
 			const newString = normalizeText(newText);
@@ -365,7 +372,7 @@ export class Vault extends DurableObject<Env> {
 			const changed = this.change(page, list, by);
 			checkSize(changed.content);
 			return changed;
-		});
+		}));
 	}
 
 	/** Renames a page, keeping its id and history. */
@@ -610,8 +617,167 @@ export class Vault extends DurableObject<Env> {
 		});
 		for (const ws of this.ctx.getWebSockets()) ws.close(4004, 'This brian was deleted.');
 		await this.ctx.storage.deleteAll();
+		this.reportDue = false; // deleteAll took the alarm with it.
 		// This instance may keep serving until it is evicted, so leave it a valid, empty database.
 		this.migrate();
+	}
+
+	// ---- Storage: each user has LIMITS.storageBytesPerUser across the brians they own ----
+	//
+	// Each brian measures itself exactly. What the owner's other brians hold comes from D1: every
+	// brian reports its size there shortly after it changes, and reads back its owner's total. Writes
+	// that add data past the cap are refused, inside their transaction, so nothing of them is kept.
+
+	private reportDue = false;
+
+	/** Bytes this brian stores: page text, the trash, and the sync state of each page. */
+	usedBytes(): number {
+		return this.sql
+			.exec<{ n: number }>(
+				// octet_length and length of a blob read sizes from the row headers, not the text itself.
+				`SELECT (SELECT COALESCE(SUM(octet_length(content)), 0) FROM pages)
+				      + (SELECT COALESCE(SUM(octet_length(content)), 0) FROM trash)
+				      + (SELECT COALESCE(SUM(length(data)), 0) FROM ystate) AS n`
+			)
+			.one().n;
+	}
+
+	/** What the owner's other brians store, as last reported. */
+	private others(): number {
+		return this.sql.exec<{ value: number }>(`SELECT value FROM meta WHERE key = 'others'`).toArray()[0]?.value ?? 0;
+	}
+
+	/** Told by a sibling brian near the cap, so this one stops (or resumes) writes at once. */
+	setOthers(bytes: number): void {
+		this.sql.exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('others', ?)`, Math.max(0, Math.round(bytes)));
+	}
+
+	/** Whether the owner's storage is past `share` of the cap, counting this brian exactly. */
+	private past(share: number): { past: boolean; total: number } {
+		const limit = LIMITS.storageBytesPerUser * share - this.others();
+		// The database file is never smaller than what's in it, so below the limit there's no need to count.
+		if (this.sql.databaseSize < limit) return { past: false, total: 0 };
+		const used = this.usedBytes();
+		return { past: used >= limit, total: used + this.others() };
+	}
+
+	/** Refuses a write that added data, once the owner's storage is full. Brian's own small writes always go through. */
+	private checkRoom(by: Author): void {
+		if (by === BRIAN || !this.past(1).past) return;
+		const cap = formatBytes(LIMITS.storageBytesPerUser);
+		throw new StorageFull(
+			this.ctx.id.name?.startsWith('b_')
+				? `This shared brian is full: its owner's Brian has used all of its ${cap}. Delete pages you don't need to make room.`
+				: `Your Brian is full: it has used all of its ${cap}. Delete pages you don't need to make room (while it's full, the oldest pages in the trash are cleared first).`
+		);
+	}
+
+	/** Adds a warning to a page just written when the owner's storage is nearly full. */
+	private warned(page: Page): Page {
+		const { past, total } = this.past(LIMITS.storageWarnShare);
+		if (!past) return page;
+		return {
+			...page,
+			warning: `This Brian has used ${formatBytes(total)} of its ${formatBytes(LIMITS.storageBytesPerUser)}. Let the user know: when it's full, nothing more can be added until pages are deleted.`
+		};
+	}
+
+	private scheduleReport(): void {
+		if (this.reportDue) return;
+		this.reportDue = true;
+		void this.ctx.storage.setAlarm(Date.now() + REPORT_MS);
+	}
+
+	async alarm(): Promise<void> {
+		this.reportDue = false;
+		try {
+			await this.report();
+		} catch (error) {
+			console.error('storage report failed', (error as Error).message);
+		}
+	}
+
+	/**
+	 * Reports this brian's size to D1 and learns what the owner's other brians hold. Over the cap,
+	 * clears the oldest trash first. Near it, tells the owner's other brians the new total at once.
+	 */
+	private async report(): Promise<void> {
+		const name = this.ctx.id.name;
+		if (!name) return;
+		const db = this.env.DB;
+		const owner = name.startsWith('b_')
+			? await db
+					.prepare(
+						`SELECT user_id FROM members WHERE brian_id = ?1 AND role = 'owner'
+						 UNION ALL SELECT user_id FROM deleted_members WHERE brian_id = ?1 AND role = 'owner' LIMIT 1`
+					)
+					.bind(name)
+					.first<string>('user_id')
+			: await db.prepare('SELECT id FROM users WHERE id = ?').bind(name).first<string>('id');
+		if (!owner) return; // Not a user's brian (gone, or never was): nothing to count.
+
+		const save = (bytes: number) =>
+			db
+				.prepare(
+					`INSERT INTO storage (vault, owner, bytes, updated_at) VALUES (?, ?, ?, ?)
+					 ON CONFLICT (vault) DO UPDATE SET owner = excluded.owner, bytes = excluded.bytes, updated_at = excluded.updated_at`
+				)
+				.bind(name, owner, bytes, Date.now())
+				.run();
+		let bytes = this.usedBytes();
+		await save(bytes);
+		const rows = (await db.prepare('SELECT vault, bytes FROM storage WHERE owner = ?').bind(owner).all<{ vault: string; bytes: number }>()).results;
+		const others = rows.reduce((sum, row) => sum + (row.vault === name ? 0 : row.bytes), 0);
+		this.setOthers(others);
+
+		if (bytes + others > LIMITS.storageBytesPerUser) {
+			const freed = this.clearOldTrash(bytes + others - LIMITS.storageBytesPerUser);
+			if (freed) await save((bytes = this.usedBytes()));
+		}
+
+		// Near the cap (or just back from it), the owner's other brians learn the total now, not at their next write.
+		const near = bytes + others >= LIMITS.storageBytesPerUser * LIMITS.storageWarnShare;
+		const wasNear = this.sql.exec<{ value: number }>(`SELECT value FROM meta WHERE key = 'near'`).toArray()[0]?.value === 1;
+		this.sql.exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('near', ?)`, near ? 1 : 0);
+		if (!near && !wasNear) return;
+		const total = bytes + others;
+		await Promise.all(
+			rows
+				.filter((row) => row.vault !== name)
+				.map((row) =>
+					this.env.VAULT.getByName(row.vault)
+						.setOthers(total - row.bytes)
+						.catch((error: Error) => console.error(`telling ${row.vault} its owner's total failed`, error.message))
+				)
+		);
+	}
+
+	/** Erases trashed pages, oldest first, until about `excess` bytes are free. Returns how many went. */
+	private clearOldTrash(excess: number): number {
+		return this.ctx.storage.transactionSync(() => {
+			const rows = this.sql
+				.exec<{ id: number; bytes: number }>(
+					`SELECT t.id, octet_length(t.content)
+					   + CASE WHEN t.page_id IS NOT NULL AND t.page_id NOT IN (SELECT id FROM pages)
+					          THEN COALESCE((SELECT SUM(length(data)) FROM ystate WHERE page_id = t.page_id), 0) ELSE 0 END AS bytes
+					 FROM trash t ORDER BY t.id`
+				)
+				.toArray();
+			let freed = 0;
+			let count = 0;
+			for (const row of rows) {
+				if (freed >= excess) break;
+				this.sql.exec(`DELETE FROM trash WHERE id = ?`, row.id);
+				freed += row.bytes;
+				count++;
+			}
+			if (count) {
+				this.sql.exec(
+					`DELETE FROM ystate WHERE page_id NOT IN (SELECT id FROM pages) AND page_id NOT IN (SELECT page_id FROM trash WHERE page_id IS NOT NULL)`
+				);
+			}
+			return count;
+		});
 	}
 
 	// ---- Sync: devices connected over WebSockets (protocol in @brian/sync) ----
@@ -693,7 +859,8 @@ export class Vault extends DurableObject<Env> {
 			const [reply, payloads] = this.handle(session, frame.header, frame.payloads);
 			ws.send(encodeFrame({ t: 'ok', ref, ...reply }, payloads));
 		} catch (error) {
-			const code: ErrorCode = error instanceof SyncError ? error.code : error instanceof VaultError ? 'refused' : 'bad-request';
+			const code: ErrorCode =
+				error instanceof SyncError ? error.code : error instanceof StorageFull ? 'full' : error instanceof VaultError ? 'refused' : 'bad-request';
 			if (!(error instanceof SyncError || error instanceof VaultError)) console.error('sync request failed', error);
 			ws.send(encodeFrame({ t: 'error', ref, code, message: (error as Error).message } satisfies Reply));
 		} finally {
@@ -852,7 +1019,15 @@ export class Vault extends DurableObject<Env> {
 	private commit<T>(fn: () => T): T {
 		this.outbox = [];
 		try {
-			const result = this.ctx.storage.transactionSync(fn);
+			let result: T;
+			try {
+				result = this.ctx.storage.transactionSync(fn);
+			} catch (error) {
+				// A refusal may rest on an old total (a brian deleted since, say): check again soon.
+				if (error instanceof StorageFull) this.scheduleReport();
+				throw error;
+			}
+			this.scheduleReport();
 			for (const ws of this.ctx.getWebSockets()) {
 				if (ws === this.origin) continue;
 				for (const frame of this.outbox) {
@@ -938,6 +1113,7 @@ export class Vault extends DurableObject<Env> {
 			doc.getText(TEXT).insert(0, text);
 		}
 		this.saveDoc(id, doc);
+		this.checkRoom(by);
 		const page: Page = { id, path, content: text, etag: crypto.randomUUID(), updatedAt: Date.now() };
 		this.sql.exec(
 			`INSERT INTO pages (id, path, fold, content, etag, updated_at, seq) VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -979,6 +1155,8 @@ export class Vault extends DurableObject<Env> {
 		const grew = !sameBytes(before, Y.encodeStateVector(doc));
 		this.saveDoc(page.id, doc);
 		if (content === page.content && !grew) return page;
+		// Shrinking a page is always allowed, so a full Brian can still be cleaned up.
+		if (content.length > page.content.length) this.checkRoom(by);
 		const changed: Page = { ...page, content, etag: crypto.randomUUID(), updatedAt: Date.now() };
 		this.sql.exec(
 			`UPDATE pages SET content = ?, etag = ?, updated_at = ?, seq = ? WHERE id = ?`,
@@ -1011,6 +1189,7 @@ export class Vault extends DurableObject<Env> {
 		const content = doc.getText(TEXT).toString();
 		checkSize(content);
 		this.saveDoc(id, doc);
+		this.checkRoom(by);
 		const page: Page = { id, path, content, etag: crypto.randomUUID(), updatedAt: Date.now() };
 		this.sql.exec(
 			`INSERT INTO pages (id, path, fold, content, etag, updated_at, seq) VALUES (?, ?, ?, ?, ?, ?, ?)`,
