@@ -1,4 +1,4 @@
-import { BrianSync, type Connect, type LocalFiles, type PageRecord, type SyncSession, type SyncStore, type Tombstone } from '@brian/sync';
+import { BrianSync, decodeFrame, type Connect, type LocalFiles, type PageRecord, type SyncSession, type SyncStore, type Tombstone } from '@brian/sync';
 import { LIMITS, type BrianSummary, type Outcome } from '@brian/shared';
 import { env, exports } from 'cloudflare:workers';
 import * as Y from 'yjs';
@@ -88,6 +88,8 @@ class Device {
 	store = new Store();
 	engine: BrianSync | null = null;
 	retry = [50];
+	/** Wraps the connector, e.g. to hold back frames. */
+	wrap = (connect: Connect): Connect => connect;
 	constructor(
 		private token: string,
 		private readOnly = false,
@@ -97,7 +99,7 @@ class Device {
 		this.engine = new BrianSync({
 			files: this.files,
 			store: this.store,
-			connect: connector(this.token, this.brian),
+			connect: this.wrap(connector(this.token, this.brian)),
 			readOnly: this.readOnly,
 			retryDelays: this.retry,
 			busyRetryMs: 20
@@ -374,6 +376,44 @@ describe('hardening', () => {
 		await tool(token, 'write_page', { path: 'c.md', content: 'now' });
 		await laptop.engine!.syncNow();
 		expect(laptop.files.files.get('c.md')).toBe('now');
+	});
+});
+
+describe('stopping', () => {
+	it('ignores frames that reach an engine after it stopped, so its next run is the only one writing', async () => {
+		const token = await user('ann');
+		const [a, b] = [new Device(token), new Device(token)];
+		// Hold back the changes the server sends a's first engine, to hand them over once that engine
+		// has stopped (a socket can still deliver frames after it was closed). Replies go through.
+		const held: Uint8Array[] = [];
+		let deliver: ((frame: Uint8Array) => void) | null = null;
+		a.wrap = (connect) => (handlers) => {
+			deliver ??= handlers.message;
+			return connect({ ...handlers, message: (frame) => {
+					if (handlers.message === deliver && decodeFrame(frame).header.t === 'page') held.push(frame);
+					else handlers.message(frame);
+				}
+			});
+		};
+		await a.start();
+		await b.start();
+		await a.save('note.md', 'one\n');
+		await quiet(a, b);
+		await b.save('note.md', 'one\ntwo from b\n');
+		await quiet(a, b);
+		expect(held.length).toBeGreaterThan(0);
+		await a.stop();
+		a.files.files.set('note.md', 'zero from a\none\n'); // Edited while a was closed.
+		await a.start();
+		await quiet(a, b);
+		for (const frame of held) deliver!(frame); // Too late: the first engine has stopped.
+		await quiet(a, b);
+		await b.save('note.md', b.files.files.get('note.md') + 'three from b\n');
+		await quiet(a, b);
+		const final = await read(token, 'note.md');
+		expect(final).toBe('zero from a\none\ntwo from b\nthree from b\n');
+		expect(a.files.files.get('note.md')).toBe(final);
+		expect(b.files.files.get('note.md')).toBe(final);
 	});
 });
 

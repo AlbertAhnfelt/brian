@@ -144,6 +144,13 @@ export class BrianSync {
 	private catchingUp = false;
 	private seenDuringCatchUp = 0;
 	private connection: Connection | null = null;
+	/**
+	 * Counts connections. A socket can still deliver frames after it closed, or after `stop()`;
+	 * those belong to a connection that is over and are dropped (a later catch-up brings what
+	 * they held). Otherwise a stopped engine could go on writing files and saved state with
+	 * its stale document while the next run is already using them.
+	 */
+	private generation = 0;
 	private requests = new Map<number, { resolve(frame: Frame): void; reject(error: Error): void }>();
 	private nextRef = 0;
 	private chain: Promise<unknown> = Promise.resolve();
@@ -405,6 +412,8 @@ export class BrianSync {
 			else await this.merge(page, [update]);
 		}
 		await this.save(page);
+		// Merging first took in the file as it is: an edit nobody reported yet must still go up.
+		if (page.dirty) this.flushSoon();
 	}
 
 	/** Applies remote updates to a page and writes the result, first taking in the file as it is now. */
@@ -489,12 +498,23 @@ export class BrianSync {
 		const delays = this.options.retryDelays ?? [1000, 2000, 5000, 10_000, 30_000];
 		while (!this.stopped) {
 			const closed = new Promise<void>((resolve) => (this.wake = resolve));
+			const generation = ++this.generation;
+			const current = () => generation === this.generation && !this.stopped;
 			try {
 				this.setState('connecting');
-				this.connection = await this.options.connect({
-					message: (frame) => this.receive(frame),
-					close: () => this.disconnected()
+				const connection = await this.options.connect({
+					message: (frame) => {
+						if (current()) this.receive(frame);
+					},
+					close: () => {
+						if (current()) this.disconnected();
+					}
 				});
+				if (!current()) {
+					connection.close(); // Stopped, or closed, while connecting.
+					throw new RequestError('disconnected', 'Disconnected.');
+				}
+				this.connection = connection;
 				attempt = 0;
 				this.setState('syncing');
 				await this.exclusive(async () => {
@@ -526,6 +546,7 @@ export class BrianSync {
 	private disconnected(): void {
 		const connection = this.connection;
 		this.connection = null;
+		this.generation++;
 		this.catchingUp = false;
 		for (const { reject } of this.requests.values()) reject(new RequestError('disconnected', 'Disconnected.'));
 		this.requests.clear();
@@ -551,11 +572,13 @@ export class BrianSync {
 		const seq = typeof header.seq === 'number' ? header.seq : 0;
 		if (header.t === 'page' && typeof header.id === 'string' && typeof header.path === 'string') {
 			void this.exclusive(async () => {
+				if (this.stopped) return;
 				await this.applyRemote(header.id as string, header.path as string, payloads[0] ?? null);
 				await this.advance(seq);
 			});
 		} else if (header.t === 'gone' && typeof header.id === 'string') {
 			void this.exclusive(async () => {
+				if (this.stopped) return;
 				await this.applyGone(header.id as string);
 				await this.advance(seq);
 			});
