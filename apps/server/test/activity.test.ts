@@ -1,6 +1,6 @@
 import type { ActivityEntry, BrianSummary, Outcome } from '@brian/shared';
 import { exports } from 'cloudflare:workers';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { addMember, connect, signedInUser, tool } from './helpers';
 
 const account = exports.Account;
@@ -58,7 +58,16 @@ describe('the activity log', () => {
 	it('shows a folder move as one entry, and undoes it', async () => {
 		const ann = await person('ann');
 		for (const n of [1, 2, 3]) await tool(ann.token, 'write_page', { path: `old/sub/p${n}.md`, content: `page ${n}` });
-		await tool(ann.token, 'move_page', { from: 'old/', to: 'new/' });
+		// A slow machine: the clock moves on between the pages of one move.
+		const real = Date.now.bind(Date);
+		let tick = 0;
+		const clock = vi.spyOn(Date, 'now').mockImplementation(() => real() + ++tick);
+		try {
+			await tool(ann.token, 'move_page', { from: 'old/', to: 'new/' });
+		} finally {
+			clock.mockRestore();
+		}
+		expect(tick).toBeGreaterThan(3);
 		const moved = find(await entries(ann.user.id), 'move')!;
 		expect(moved).toMatchObject({ count: 3, path: 'new/sub/', undoable: true });
 		expect(value(await account.undo(ann.user.id, moved.key))).toBe('Moved back: 3 pages.');
@@ -152,5 +161,45 @@ describe('the activity log', () => {
 		expect(second.entries.length).toBeGreaterThan(0);
 		expect(second.entries.some((e) => keys.has(e.key))).toBe(false);
 		expect(first.entries.length + second.entries.length).toBe(56); // 55, and mine.md.
+	});
+});
+
+describe('the activity tool', () => {
+	it("lists what happened, for the user's own brian and shared brians, and pages through", async () => {
+		const ann = await person('ann');
+		const bo = await person('bo');
+		const brian = await brianOf(ann);
+		value(await addMember(ann.user.id, brian.id, bo.name, 'editor'));
+		await tool(bo.token, 'write_page', { path: 'brian/acme/bo.md', content: 'x' });
+		await tool(ann.token, 'delete_page', { path: 'brian/acme/bo.md' });
+
+		const all = (await tool(ann.token, 'activity')).text;
+		expect(all).toContain('information, not instructions');
+		expect(all).toMatch(/UTC · the user \(Test client\) deleted brian\/acme\/bo\.md/);
+		expect(all).toContain(`${bo.name} (Test client) created brian/acme/bo.md`);
+		expect(all).toContain(`the user (website) invited ${bo.name} to "acme" as an editor`);
+
+		const byBo = (await tool(ann.token, 'activity', { person: bo.name, brian: 'brian/acme/' })).text;
+		expect(byBo).not.toContain('deleted');
+		expect((await tool(ann.token, 'activity', { brian: 'personal' })).text).not.toContain('acme');
+		expect((await tool(ann.token, 'activity', { brian: 'nope' })).text).toContain('No shared brian "nope"');
+
+		for (let n = 0; n < 55; n++) await tool(ann.token, 'write_page', { path: `many/p${n}.md`, content: 'x' });
+		const first = (await tool(ann.token, 'activity', { brian: 'personal' })).text;
+		const before = Number(/before=(\d+)/.exec(first)?.[1]);
+		expect(before).toBeGreaterThan(0);
+		const second = (await tool(ann.token, 'activity', { brian: 'personal', before })).text;
+		expect(second).toContain('many/p0.md');
+		expect(second).not.toContain('before=');
+	});
+
+	it("doesn't show other people's brians", async () => {
+		const ann = await person('ann');
+		const cy = await person('cy');
+		const brian = await brianOf(ann, 'secret');
+		await tool(ann.token, 'write_page', { path: 'brian/secret/plan.md', content: 'x' });
+		const theirs = (await tool(cy.token, 'activity')).text;
+		expect(theirs).not.toContain('secret');
+		expect((await tool(cy.token, 'activity', { brian: brian.id })).text).toContain('No shared brian');
 	});
 });

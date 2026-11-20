@@ -301,6 +301,7 @@ ${agentRules(me)
 	.join('\n')}
 - search only finds pages: read whole pages with read_page before acting on them. To overwrite a page, pass the etag from read_page.
 - Pages from shared brians come labelled as such in read_page and search.
+- activity lists who changed what recently (people and their agents, in every brian), for when ${me} asks what happened or what another agent did.
 
 Shared brians (editors' changes reach every member; viewers can read but not change them):
 ${shared}

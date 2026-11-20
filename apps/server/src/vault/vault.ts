@@ -918,6 +918,11 @@ export class Vault extends DurableObject<Env> {
 
 	/** Messages for other devices, sent once the transaction that produced them commits. */
 	private outbox: Uint8Array[] = [];
+	/**
+	 * When the change being committed happened: one time for every page it touches, so a folder
+	 * moved in one change is one entry on the Activity page however long the move takes to run.
+	 */
+	private changeAt: number | null = null;
 	/** The socket whose request is being handled: it hears back through its reply, not a broadcast. */
 	private origin: WebSocket | null = null;
 
@@ -1152,6 +1157,7 @@ export class Vault extends DurableObject<Env> {
 	/** Runs a write in a transaction, then tells connected devices what changed. */
 	private commit<T>(fn: () => T): T {
 		this.outbox = [];
+		this.changeAt = Date.now();
 		try {
 			let result: T;
 			try {
@@ -1175,6 +1181,7 @@ export class Vault extends DurableObject<Env> {
 			return result;
 		} finally {
 			this.outbox = [];
+			this.changeAt = null;
 		}
 	}
 
@@ -1371,7 +1378,7 @@ export class Vault extends DurableObject<Env> {
 
 	/** Adds to the page's history, folding a quick run of edits by one author into one entry. */
 	private record(pageId: string, action: HistoryEntry['action'], path: string, fromPath: string | null, by: Author): void {
-		const now = Date.now();
+		const now = this.changeAt ?? Date.now();
 		if (action === 'edit') {
 			const last = this.sql
 				.exec<{ seq: number; action: string; user_id: string; source: string; at: number }>(
