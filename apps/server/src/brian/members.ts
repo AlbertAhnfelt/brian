@@ -1,4 +1,5 @@
 import {
+	type BrianAction,
 	isValidName,
 	LIMITS,
 	NAME_RULES,
@@ -31,6 +32,26 @@ const no = (message: string): { ok: false; message: string } => ({ ok: false, me
 const done: Outcome = { ok: true, value: undefined };
 
 const NOT_FOUND = 'No such brian.';
+
+/** What the website records as the app for changes made there. */
+export const WEBSITE = 'website';
+
+/** One thing that happened to a shared brian, for its Activity log. */
+interface Logged {
+	targetUser?: string | null;
+	target?: string | null;
+	role?: string | null;
+	from?: string | null;
+}
+
+/** Records a change to a brian (see migrations/0008_activity.sql). A failure here never fails the change. */
+async function log(db: D1Database, brianId: string, userId: string, source: string, action: BrianAction, entry: Logged = {}): Promise<void> {
+	await db
+		.prepare('INSERT INTO activity (brian_id, user_id, source, action, target_user, target, role, from_value, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+		.bind(brianId, userId, source, action, entry.targetUser ?? null, entry.target ?? null, entry.role ?? null, entry.from ?? null, Date.now())
+		.run()
+		.catch((error: Error) => console.error('logging activity failed', error.message));
+}
 
 /** A user's memberships, with what their Brian needs to route paths. */
 export async function membershipsOf(db: D1Database, userId: string): Promise<BrianSummary[]> {
@@ -136,7 +157,7 @@ async function insertMember(env: Bindings, brian: { id: string; name: string }, 
 	return ok(mount);
 }
 
-export async function createBrian(env: Bindings, userId: string, input: string, visibility: Visibility): Promise<Outcome<BrianSummary>> {
+export async function createBrian(env: Bindings, userId: string, input: string, visibility: Visibility, source = WEBSITE): Promise<Outcome<BrianSummary>> {
 	const name = normalizeName(input);
 	if (!isValidName(name)) return no(`Brian names are ${NAME_RULES}`);
 	if (visibility !== 'private' && visibility !== 'public') return no('Unknown visibility.');
@@ -159,6 +180,7 @@ export async function createBrian(env: Bindings, userId: string, input: string, 
 		return joined;
 	}
 	await env.VAULT.getByName(id).write('BRIAN.md', sharedBrianMd(id, name));
+	await log(env.DB, id, userId, source, 'brian.create', { target: name, role: visibility });
 	await notify(env, userId);
 	return ok({ id, name, visibility, role: 'owner', mount: joined.value });
 }
@@ -216,10 +238,13 @@ export async function readableBrian(
 	return brian ? { ...brian, visibility: 'public', role: null } : null;
 }
 
-export async function setVisibility(db: D1Database, userId: string, brianId: string, visibility: Visibility): Promise<Outcome> {
+export async function setVisibility(db: D1Database, userId: string, brianId: string, visibility: Visibility, source = WEBSITE): Promise<Outcome> {
 	if (visibility !== 'private' && visibility !== 'public') return no('Unknown visibility.');
-	if (!(await owned(db, userId, brianId))) return no(NOT_FOUND);
+	const mine = await owned(db, userId, brianId);
+	if (!mine) return no(NOT_FOUND);
+	if (mine.visibility === visibility) return done;
 	await db.prepare('UPDATE brians SET visibility = ? WHERE id = ?').bind(visibility, brianId).run();
+	await log(db, brianId, userId, source, 'brian.visibility', { role: visibility, from: mine.visibility });
 	return done;
 }
 
@@ -230,7 +255,7 @@ const isMemberRole = (role: string): role is 'editor' | 'viewer' => role === 'ed
  * accept: nobody can be put in a brian without saying yes. An email address nobody has signed in
  * with yet is held (email_invites) and becomes an invitation when someone signs in with it.
  */
-export async function invite(env: Bindings, userId: string, brianId: string, who: string, role: string): Promise<Outcome<Invited>> {
+export async function invite(env: Bindings, userId: string, brianId: string, who: string, role: string, source = WEBSITE): Promise<Outcome<Invited>> {
 	const db = env.DB;
 	if (!isMemberRole(role)) return no('Members are editors or viewers.');
 	if (!(await owned(db, userId, brianId))) return no(NOT_FOUND);
@@ -248,6 +273,7 @@ export async function invite(env: Bindings, userId: string, brianId: string, who
 		const user = await userByEmail(db, email);
 		if (user) {
 			const sent = await inviteUser(db, userId, brianId, user.id, user.username ?? email, role, email);
+			if (sent.ok) await log(db, brianId, userId, source, 'brian.invite', { targetUser: user.id, target: email, role });
 			// Someone who hasn't picked a username can't be found by search either: the answer doesn't tell them apart.
 			return sent.ok && !user.username ? ok('email') : sent;
 		}
@@ -255,11 +281,15 @@ export async function invite(env: Bindings, userId: string, brianId: string, who
 			.prepare('INSERT INTO email_invites (brian_id, email, role, invited_by) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING')
 			.bind(brianId, email, role, userId)
 			.run();
-		return sent.meta.changes ? ok('email') : no(`${email} is already invited.`);
+		if (!sent.meta.changes) return no(`${email} is already invited.`);
+		await log(db, brianId, userId, source, 'brian.invite', { target: email, role });
+		return ok('email');
 	}
 	const user = await userByUsername(db, input);
 	if (!user) return no(`Nobody has the username ${normalizeName(input)}. To invite someone without an account, use their email address.`);
-	return inviteUser(db, userId, brianId, user.id, user.username, role, null);
+	const sent = await inviteUser(db, userId, brianId, user.id, user.username, role, null);
+	if (sent.ok) await log(db, brianId, userId, source, 'brian.invite', { targetUser: user.id, target: user.username, role });
+	return sent;
 }
 
 /** `email`: the address typed, when the invitation went by email (shown to the owner instead of the account's own). */
@@ -287,25 +317,26 @@ async function inviteUser(
 }
 
 /** The owner takes back an invitation that hasn't been answered, by username or by the email address invited. */
-export async function cancelInvite(env: Bindings, userId: string, brianId: string, who: string): Promise<Outcome> {
+export async function cancelInvite(env: Bindings, userId: string, brianId: string, who: string, source = WEBSITE): Promise<Outcome> {
 	const db = env.DB;
 	if (!(await owned(db, userId, brianId))) return no(NOT_FOUND);
 	const input = who.trim();
 	if (input.includes('@')) {
 		const email = input.toLowerCase();
-		await db.batch([
-			db.prepare('DELETE FROM email_invites WHERE brian_id = ? AND email = ?').bind(brianId, email),
+		const [held, sent] = await db.batch<{ role: string }>([
+			db.prepare('DELETE FROM email_invites WHERE brian_id = ? AND email = ? RETURNING role').bind(brianId, email),
 			db
 				.prepare(
-					`DELETE FROM invites WHERE brian_id = ?1 AND (email = ?2 OR user_id IN (SELECT id FROM users WHERE email = ?2 UNION SELECT user_id FROM accounts WHERE email = ?2))`
+					`DELETE FROM invites WHERE brian_id = ?1 AND (email = ?2 OR user_id IN (SELECT id FROM users WHERE email = ?2 UNION SELECT user_id FROM accounts WHERE email = ?2)) RETURNING role`
 				)
 				.bind(brianId, email)
 		]);
+		const role = held.results[0]?.role ?? sent.results[0]?.role;
+		if (role) await log(db, brianId, userId, source, 'brian.uninvite', { target: email, role });
 	} else {
-		await db
-			.prepare('DELETE FROM invites WHERE brian_id = ? AND user_id = (SELECT id FROM users WHERE username = ?)')
-			.bind(brianId, normalizeName(input))
-			.run();
+		const user = await userByUsername(db, input);
+		const taken = user && (await db.prepare('DELETE FROM invites WHERE brian_id = ? AND user_id = ? RETURNING role').bind(brianId, user.id).first<string>('role'));
+		if (user && taken) await log(db, brianId, userId, source, 'brian.uninvite', { targetUser: user.id, target: user.username, role: taken });
 	}
 	return done;
 }
@@ -344,7 +375,7 @@ export async function invitesOf(db: D1Database, userId: string): Promise<Invite[
 }
 
 /** The invited user says yes: they become a member with the role they were invited as. */
-export async function acceptInvite(env: Bindings, userId: string, brianId: string): Promise<Outcome<BrianSummary>> {
+export async function acceptInvite(env: Bindings, userId: string, brianId: string, source = WEBSITE): Promise<Outcome<BrianSummary>> {
 	const db = env.DB;
 	await claimEmailInvites(db, userId);
 	const pending = await db
@@ -363,11 +394,13 @@ export async function acceptInvite(env: Bindings, userId: string, brianId: strin
 			await kick(env, brianId, userId);
 		}
 		await db.prepare('DELETE FROM invites WHERE brian_id = ? AND user_id = ?').bind(brianId, userId).run();
+		await log(db, brianId, userId, source, 'brian.accept', { role: pending.role, from: existing.role });
 		return ok((await membership(db, userId, brianId))!);
 	}
 	const joined = await insertMember(env, pending, userId, pending.role);
 	if (!joined.ok) return joined;
 	await db.prepare('DELETE FROM invites WHERE brian_id = ? AND user_id = ?').bind(brianId, userId).run();
+	await log(db, brianId, userId, source, 'brian.accept', { role: pending.role });
 	await notify(env, userId);
 	return ok((await membership(db, userId, brianId))!);
 }
@@ -379,37 +412,44 @@ export async function declineInvite(env: Bindings, userId: string, brianId: stri
 	return done;
 }
 
-export async function setRole(env: Bindings, userId: string, brianId: string, username: string, role: string): Promise<Outcome> {
+export async function setRole(env: Bindings, userId: string, brianId: string, username: string, role: string, source = WEBSITE): Promise<Outcome> {
 	const db = env.DB;
 	if (!isMemberRole(role)) return no('Members are editors or viewers.');
 	if (!(await owned(db, userId, brianId))) return no(NOT_FOUND);
 	const user = await userByUsername(db, username);
 	if (!user || user.id === userId) return no(`${normalizeName(username)} isn't a member you can change.`);
+	const before = await db
+		.prepare(`SELECT role FROM members WHERE brian_id = ? AND user_id = ? AND role != 'owner'`)
+		.bind(brianId, user.id)
+		.first<Role>('role');
+	if (!before) return no(`${user.username} isn't a member.`);
 	const result = await db
 		.prepare(`UPDATE members SET role = ? WHERE brian_id = ? AND user_id = ? AND role != 'owner'`)
 		.bind(role, brianId, user.id)
 		.run();
 	if (!result.meta.changes) return no(`${user.username} isn't a member.`);
+	if (before !== role) await log(db, brianId, userId, source, 'brian.role', { targetUser: user.id, target: user.username, role, from: before });
 	await kick(env, brianId, user.id);
 	return done;
 }
 
-export async function removeMember(env: Bindings, userId: string, brianId: string, username: string): Promise<Outcome> {
+export async function removeMember(env: Bindings, userId: string, brianId: string, username: string, source = WEBSITE): Promise<Outcome> {
 	const db = env.DB;
 	if (!(await owned(db, userId, brianId))) return no(NOT_FOUND);
 	const user = await userByUsername(db, username);
 	if (!user || user.id === userId) return no(`${normalizeName(username)} isn't a member you can remove.`);
-	const result = await db
-		.prepare(`DELETE FROM members WHERE brian_id = ? AND user_id = ? AND role != 'owner'`)
+	const removed = await db
+		.prepare(`DELETE FROM members WHERE brian_id = ? AND user_id = ? AND role != 'owner' RETURNING role`)
 		.bind(brianId, user.id)
-		.run();
-	if (!result.meta.changes) return no(`${user.username} isn't a member.`);
+		.first<Role>('role');
+	if (!removed) return no(`${user.username} isn't a member.`);
+	await log(db, brianId, userId, source, 'brian.remove', { targetUser: user.id, target: user.username, from: removed });
 	await kick(env, brianId, user.id);
 	return done;
 }
 
 /** "Sync to this brian": anyone can join a public brian, as a viewer. */
-export async function join(env: Bindings, userId: string, brianId: string): Promise<Outcome<BrianSummary>> {
+export async function join(env: Bindings, userId: string, brianId: string, source = WEBSITE): Promise<Outcome<BrianSummary>> {
 	const brian = await env.DB.prepare(`SELECT id, name FROM brians WHERE id = ? AND visibility = 'public' AND deleted_at IS NULL`)
 		.bind(brianId)
 		.first<{ id: string; name: string }>();
@@ -418,17 +458,19 @@ export async function join(env: Bindings, userId: string, brianId: string): Prom
 	if (existing) return ok(existing);
 	const joined = await insertMember(env, brian, userId, 'viewer');
 	if (!joined.ok) return joined;
+	await log(env.DB, brianId, userId, source, 'brian.join', { role: 'viewer' });
 	await notify(env, userId);
 	return ok({ ...brian, visibility: 'public', role: 'viewer', mount: joined.value });
 }
 
 /** Members leave. The owner can't: they delete the brian instead. */
-export async function leave(env: Bindings, userId: string, brianId: string): Promise<Outcome> {
+export async function leave(env: Bindings, userId: string, brianId: string, source = WEBSITE): Promise<Outcome> {
 	const db = env.DB;
 	const mine = await membership(db, userId, brianId);
 	if (!mine) return no(NOT_FOUND);
 	if (mine.role === 'owner') return no("Owners can't leave their own brian. Delete it instead.");
 	await db.prepare('DELETE FROM members WHERE brian_id = ? AND user_id = ?').bind(brianId, userId).run();
+	await log(db, brianId, userId, source, 'brian.leave', { from: mine.role });
 	await kick(env, brianId, userId);
 	return done;
 }
@@ -438,7 +480,7 @@ export async function leave(env: Bindings, userId: string, brianId: string): Pro
  * when they rename it in Obsidian. Only their own folder changes, nobody else's. When the owner
  * renames it, the brian's name follows.
  */
-export async function setMount(env: Bindings, userId: string, brianId: string, input: string): Promise<Outcome<string>> {
+export async function setMount(env: Bindings, userId: string, brianId: string, input: string, source = WEBSITE): Promise<Outcome<string>> {
 	const mine = await membership(env.DB, userId, brianId);
 	if (!mine) return no(NOT_FOUND);
 	const mount = normalizeName(input);
@@ -457,6 +499,8 @@ export async function setMount(env: Bindings, userId: string, brianId: string, i
 		if (String(error).includes('UNIQUE')) return no('Another shared brian already has that folder.');
 		throw error;
 	}
+	// Only the brian's own name is everyone's business; a member's folder is theirs alone.
+	if (mine.role === 'owner' && mine.name !== mount) await log(env.DB, brianId, userId, source, 'brian.rename', { target: mount, from: mine.name });
 	return ok(mount);
 }
 
@@ -484,7 +528,7 @@ const now = () => Math.floor(Date.now() / 1000);
  * in its Vault and its members are remembered (freeing their folder names meanwhile); open
  * invitations are dropped. The daily purge erases it once the time is up.
  */
-export async function deleteBrian(env: Bindings, userId: string, brianId: string): Promise<Outcome> {
+export async function deleteBrian(env: Bindings, userId: string, brianId: string, source = WEBSITE): Promise<Outcome> {
 	const db = env.DB;
 	if (!(await owned(db, userId, brianId))) return no(NOT_FOUND);
 	const members = (await db.prepare('SELECT user_id FROM members WHERE brian_id = ?').bind(brianId).all<{ user_id: string }>()).results;
@@ -496,6 +540,7 @@ export async function deleteBrian(env: Bindings, userId: string, brianId: string
 		db.prepare('DELETE FROM email_invites WHERE brian_id = ?').bind(brianId),
 		db.prepare('UPDATE brians SET deleted_at = ? WHERE id = ?').bind(now(), brianId)
 	]);
+	await log(db, brianId, userId, source, 'brian.delete');
 	for (const member of members) await kick(env, brianId, member.user_id);
 	return done;
 }
@@ -518,7 +563,7 @@ export async function deletedBrians(db: D1Database, userId: string): Promise<Del
  * Brings a brian back from the trash. Owner only. Every member gets their folder back (the old
  * name if it's still free); one who can't take another brian right now is invited back instead.
  */
-export async function restoreBrian(env: Bindings, userId: string, brianId: string): Promise<Outcome<BrianSummary>> {
+export async function restoreBrian(env: Bindings, userId: string, brianId: string, source = WEBSITE): Promise<Outcome<BrianSummary>> {
 	const db = env.DB;
 	const trashed = (await deletedBrians(db, userId)).find((b) => b.id === brianId);
 	if (!trashed) return no('No such brian in your trash.');
@@ -540,6 +585,7 @@ export async function restoreBrian(env: Bindings, userId: string, brianId: strin
 		return owner;
 	}
 	await db.prepare('DELETE FROM deleted_members WHERE brian_id = ? AND user_id = ?').bind(brianId, userId).run();
+	await log(db, brianId, userId, source, 'brian.restore');
 	await notify(env, userId);
 	for (const row of rows) {
 		if (row.user_id === userId || row.role === 'owner') continue;
@@ -579,7 +625,8 @@ export async function purgeDeletedBrians(env: Bindings, at = now()): Promise<num
 			await env.VAULT.getByName(id).destroy();
 			await env.DB.batch([
 				env.DB.prepare('DELETE FROM brians WHERE id = ? AND deleted_at = ?').bind(id, PURGING),
-				env.DB.prepare('DELETE FROM storage WHERE vault = ?').bind(id)
+				env.DB.prepare('DELETE FROM storage WHERE vault = ?').bind(id),
+				env.DB.prepare('DELETE FROM activity WHERE brian_id = ?').bind(id)
 			]);
 			purged++;
 		} catch (error) {
@@ -596,7 +643,10 @@ async function destroyBrian(env: Bindings, brianId: string): Promise<void> {
 		env.DB.prepare('DELETE FROM brians WHERE id = ?').bind(brianId)
 	]);
 	await env.VAULT.getByName(brianId).destroy();
-	await env.DB.prepare('DELETE FROM storage WHERE vault = ?').bind(brianId).run();
+	await env.DB.batch([
+		env.DB.prepare('DELETE FROM storage WHERE vault = ?').bind(brianId),
+		env.DB.prepare('DELETE FROM activity WHERE brian_id = ?').bind(brianId)
+	]);
 }
 
 /** Whether the user's agents may create, share, change and delete brians (the switch on /account). */

@@ -1,3 +1,4 @@
+import type { ActivityFilter, ActivityPage } from './activity';
 import type { ReaderHit, ReaderView } from './reader';
 import type { BrianSummary, BrianView, DeletedBrian, Invite, Invited, Outcome, Role, Visibility } from './brians';
 
@@ -63,6 +64,11 @@ export interface AccountRpc {
 	deletedBrians(userId: string): Promise<DeletedBrian[]>;
 	/** Brings a brian back from the trash, with its members. Owner only. */
 	restoreBrian(userId: string, brianId: string): Promise<Outcome<BrianSummary>>;
+
+	/** Who changed what, newest first, in the user's brian and the shared brians they're in. */
+	activity(userId: string, filter?: ActivityFilter): Promise<ActivityPage>;
+	/** Undoes one Activity entry (by its `key`). The message says what was done. */
+	undo(userId: string, key: string): Promise<Outcome<string>>;
 
 	/** Whether the user's agents (MCP apps) may create, share, change and delete brians. */
 	agentsManageBrians(userId: string): Promise<boolean>;

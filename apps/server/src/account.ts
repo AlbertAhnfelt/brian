@@ -1,7 +1,8 @@
 import { getOAuthApi } from '@cloudflare/workers-oauth-provider';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { oauthOptions } from './oauth';
-import type { AccountRpc, ReaderHit, ReaderView, BrianSummary, BrianView, Connection, DeletedBrian, Invite, Invited, Outcome, Person, Role, Visibility } from '@brian/shared';
+import type { AccountRpc, ActivityFilter, ActivityPage, ReaderHit, ReaderView, BrianSummary, BrianView, Connection, DeletedBrian, Invite, Invited, Outcome, Person, Role, Visibility } from '@brian/shared';
+import * as activity from './brian/activity';
 import * as friends from './brian/friends';
 import * as members from './brian/members';
 import * as reader from './brian/reader';
@@ -117,6 +118,14 @@ export class Account extends WorkerEntrypoint<Env> implements AccountRpc {
 
 	restoreBrian(userId: string, brianId: string): Promise<Outcome<BrianSummary>> {
 		return members.restoreBrian(this.env, userId, brianId);
+	}
+
+	activity(userId: string, filter: ActivityFilter = {}): Promise<ActivityPage> {
+		return activity.activityOf(this.env, userId, filter);
+	}
+
+	undo(userId: string, key: string): Promise<Outcome<string>> {
+		return activity.undo(this.env, userId, key);
 	}
 
 	agentsManageBrians(userId: string): Promise<boolean> {

@@ -22,6 +22,7 @@
 			<a href="/brians" aria-current={page.url.pathname === '/brians' || page.url.pathname.startsWith('/b/') ? 'page' : undefined}
 				>brians{#if data.invites}<span class="badge" title="{data.invites} invitation{data.invites === 1 ? '' : 's'}">{data.invites}</span>{/if}</a
 			>
+			<a href="/activity" aria-current={page.url.pathname === '/activity' ? 'page' : undefined}>activity</a>
 			<a href="/account" aria-current={page.url.pathname === '/account' ? 'page' : undefined}>account</a>
 			<form method="post" action="/logout">
 				<button class="button ghost">log out</button>
@@ -73,6 +74,19 @@
 		align-items: center;
 		gap: 1.25rem;
 		font-size: 0.9rem;
+	}
+
+	/* On a phone the links get their own row under the wordmark. */
+	@media (max-width: 34rem) {
+		header {
+			flex-wrap: wrap;
+			gap: 0.75rem;
+		}
+
+		nav {
+			flex-wrap: wrap;
+			gap: 0.5rem 1rem;
+		}
 	}
 
 	nav a:not(.button) {

@@ -91,13 +91,30 @@ export interface HistoryEntry {
 	at: number;
 }
 
+/**
+ * Page changes made in one instant by one author with one action (a folder moved, a chunk of
+ * pages copied), as one line on the Activity page. `at`, `user`, `source` and `action` name the
+ * group, for `undo`.
+ */
+export interface ActivityGroup {
+	at: number;
+	user: string;
+	source: string;
+	action: HistoryEntry['action'];
+	count: number;
+	/** The page, or the deepest folder holding them all ("" for the root) when count > 1. */
+	path: string;
+	/** For a single page's move: where it was. */
+	fromPath: string | null;
+}
+
 /** Writes Brian makes itself (templates, migrations). */
 const BRIAN: Author = { user: '', source: 'brian' };
 /** Edits by the same author to the same page within this window count as one in the history. */
 const HISTORY_MERGE_MS = 5 * 60 * 1000;
 /** Durable Object SQLite rows are capped at 2 MB, so Yjs state is stored in parts. */
 const PART_BYTES = 512 * 1024;
-const SCHEMA = 3;
+const SCHEMA = 4;
 /** Sync tickets work once, within this long of being issued. */
 const TICKET_MS = 60 * 1000;
 /** Largest Yjs state a page may grow to (its text is capped at LIMITS.pageBytes). */
@@ -170,8 +187,15 @@ export class Vault extends DurableObject<Env> {
 		this.ctx.storage.transactionSync(() => {
 			if (version === 0 || !tables.has('pages')) this.createSchema();
 			else if (version === 1) this.upgradeFromV1();
-			else this.addTickets();
+			else if (version === 2) this.addTickets();
+			this.indexHistoryByTime();
 		});
+	}
+
+	/** Schema 4: the Activity page reads the history newest first, across pages. */
+	private indexHistoryByTime(): void {
+		this.sql.exec(`CREATE INDEX IF NOT EXISTS history_at ON history (at)`);
+		this.sql.exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?)`, SCHEMA);
 	}
 
 	private createSchema(): void {
@@ -615,6 +639,90 @@ export class Vault extends DurableObject<Env> {
 			)
 			.toArray()
 			.map((r) => ({ action: r.action, path: r.path, fromPath: r.from_path, user: r.user_id, source: r.source, at: r.at }));
+	}
+
+	/**
+	 * Page changes newest first, in groups (see ActivityGroup), before `before` (milliseconds).
+	 * Brian's own writes (the rules in BRIAN.md) are left out. Optionally only one author or app.
+	 */
+	activity(options: { before?: number; limit?: number; user?: string; source?: string } = {}): ActivityGroup[] {
+		const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+		return this.sql
+			.exec<{ at: number; user_id: string; source: string; action: HistoryEntry['action']; n: number; first: string; last: string; from_path: string | null }>(
+				`SELECT at, user_id, source, action, COUNT(*) AS n, MIN(path) AS first, MAX(path) AS last, MIN(from_path) AS from_path
+				 FROM history
+				 WHERE at < ?1 AND source != 'brian' AND (?2 IS NULL OR user_id = ?2) AND (?3 IS NULL OR source = ?3)
+				 GROUP BY at, user_id, source, action ORDER BY at DESC LIMIT ?4`,
+				options.before ?? Number.MAX_SAFE_INTEGER,
+				options.user ?? null,
+				options.source ?? null,
+				limit
+			)
+			.toArray()
+			.map((row) => ({
+				at: row.at,
+				user: row.user_id,
+				source: row.source,
+				action: row.action,
+				count: row.n,
+				path: row.n === 1 ? row.first : commonFolder(row.first, row.last),
+				fromPath: row.n === 1 ? row.from_path : null
+			}));
+	}
+
+	/**
+	 * Undoes one group of page changes (see `activity`), as far as it safely can: a delete brings
+	 * the pages back from the trash, a move puts them back where they were (if that's still free),
+	 * a create moves them to the trash. Edits can't be undone: earlier text isn't kept. Pages
+	 * changed since in a way that makes it impossible (moved again, already back) are skipped.
+	 */
+	undo(group: Pick<ActivityGroup, 'at' | 'user' | 'source' | 'action'>, by: Author): { undone: number; skipped: number } | { error: string } {
+		if (group.action !== 'delete' && group.action !== 'move' && group.action !== 'create') {
+			return { error: group.action === 'edit' ? "Edits can't be undone: Brian doesn't keep a page's earlier text." : "This can't be undone." };
+		}
+		// Refusals (a full brian, say) come back as a message: an error's class doesn't survive RPC.
+		try {
+			return this.undoGroup(group, by);
+		} catch (error) {
+			if (error instanceof VaultError) return { error: error.message };
+			throw error;
+		}
+	}
+
+	private undoGroup(group: Pick<ActivityGroup, 'at' | 'user' | 'source' | 'action'>, by: Author): { undone: number; skipped: number } {
+		return this.commit(() => {
+			const rows = this.sql
+				.exec<{ page_id: string; path: string; from_path: string | null }>(
+					`SELECT page_id, path, from_path FROM history WHERE at = ? AND user_id = ? AND source = ? AND action = ? ORDER BY seq`,
+					group.at,
+					group.user,
+					group.source,
+					group.action
+				)
+				.toArray();
+			if (!rows.length) throw new VaultError('That change is no longer in the history.');
+			let undone = 0;
+			const empty = Y.encodeStateAsUpdate(new Y.Doc());
+			for (const row of rows) {
+				const page = this.byId(row.page_id);
+				if (group.action === 'delete') {
+					if (!page && this.restore(row.page_id, empty, by)) undone++;
+				} else if (group.action === 'create') {
+					if (page) {
+						this.trashPage(page, by, undone === 0);
+						undone++;
+					}
+				} else if (page && row.from_path && foldPath(page.path) === foldPath(row.path)) {
+					const back = normalizePath(row.from_path);
+					const clash = this.find(back);
+					if (!clash || clash.id === page.id) {
+						this.relocate(page, clash ? back : this.inExistingFolders(back), by);
+						undone++;
+					}
+				}
+			}
+			return { undone, skipped: rows.length - undone };
+		});
 	}
 
 	/** Every page, plus the trash under `.trash/<deleted at>/<path>`, for export. */
@@ -1352,4 +1460,13 @@ function base64url(bytes: Uint8Array): string {
 async function sha256(text: string): Promise<string> {
 	const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
 	return [...digest].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** The deepest folder holding both paths, with a trailing slash ("" when only the root does). */
+function commonFolder(a: string, b: string): string {
+	const x = a.split('/');
+	const y = b.split('/');
+	let i = 0;
+	while (i < Math.min(x.length, y.length) - 1 && x[i] === y[i]) i++;
+	return i ? `${x.slice(0, i).join('/')}/` : '';
 }

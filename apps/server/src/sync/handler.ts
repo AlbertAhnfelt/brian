@@ -39,7 +39,7 @@ export async function syncSession(request: Request, env: Env, props: Props): Pro
 export async function syncMount(request: Request, env: Env, props: Props): Promise<Response> {
 	const body = (await request.json().catch(() => null)) as { brian?: unknown; mount?: unknown } | null;
 	if (typeof body?.brian !== 'string' || typeof body.mount !== 'string') return Response.json({ error: 'Send "brian" and "mount".' }, { status: 400 });
-	const outcome = await setMount(env, props.userId, body.brian, body.mount);
+	const outcome = await setMount(env, props.userId, body.brian, body.mount, props.client || 'Obsidian');
 	return outcome.ok ? Response.json({ mount: outcome.value }) : Response.json({ error: outcome.message }, { status: 409 });
 }
 

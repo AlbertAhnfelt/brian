@@ -24,6 +24,7 @@
 		<p>
 			In your Brian at <code>brian/{view.brian.mount}/</code>. You're {view.brian.role === 'owner' ? 'the owner' : `a ${view.brian.role}`},
 			and it's {view.brian.visibility}{view.brian.visibility === 'public' ? ': anyone with this page’s link can sync to it as a viewer' : ': invite only'}.
+			<a href="/activity?brian={view.brian.id}">See its activity</a>.
 		</p>
 
 		<h2>Members</h2>

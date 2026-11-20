@@ -33,7 +33,8 @@ export async function createServer(): Promise<McpServer> {
 	if (!props) return new McpServer({ name: 'brian', version: '0.0.1' });
 
 	// What the user connected through, as the app registered itself ("Claude"), for page history.
-	const vault = await Brian.load(env, props.userId, props.client || 'MCP');
+	const app = props.client || 'MCP';
+	const vault = await Brian.load(env, props.userId, app);
 	const server = new McpServer({ name: 'brian', version: '0.0.1' }, { instructions: instructions(vault, env.BASE_URL) });
 
 	server.registerTool(
@@ -190,7 +191,7 @@ export async function createServer(): Promise<McpServer> {
 		},
 		({ name, visibility }) =>
 			manage(async () => {
-				const b = outcome(await members.createBrian(env, props.userId, name, visibility));
+				const b = outcome(await members.createBrian(env, props.userId, name, visibility, app));
 				return `Created brian/${b.mount}/ ("${b.name}", ${b.visibility}); you're the owner. Page: ${link(b.id)}\nNext, fill in brian/${b.mount}/BRIAN.md: what this brian is for and how it's organised. Then share it with share_brian if ${vault.username} wants to.`;
 			})
 	);
@@ -224,7 +225,7 @@ export async function createServer(): Promise<McpServer> {
 		({ brian, who, role }) =>
 			manage(async () => {
 				const b = vault.brian(brian);
-				const sent = outcome(await members.invite(env, props.userId, b.id, who, role));
+				const sent = outcome(await members.invite(env, props.userId, b.id, who, role, app));
 				return sent === 'account'
 					? `Invited ${who.trim()} to "${b.name}" as ${role === 'editor' ? 'an editor' : 'a viewer'}. They join once they accept, at ${env.BASE_URL}/brians or through their own agent.`
 					: `Invited ${who.trim().toLowerCase()} to "${b.name}" as ${role === 'editor' ? 'an editor' : 'a viewer'}. The invitation waits for whoever signs in at ${env.BASE_URL} with that address; they join once they accept. Brian doesn't send an email, so let them know.`;
@@ -245,15 +246,15 @@ export async function createServer(): Promise<McpServer> {
 				if (!view?.member || b.role !== 'owner') throw new Error(`Only the owner of "${b.name}" manages its members.`);
 				const key = who.trim().toLowerCase();
 				if (view.members.some((m) => m.username === key)) {
-					if (role === 'remove') outcome(await members.removeMember(env, props.userId, b.id, key));
-					else outcome(await members.setRole(env, props.userId, b.id, key, role));
+					if (role === 'remove') outcome(await members.removeMember(env, props.userId, b.id, key, app));
+					else outcome(await members.setRole(env, props.userId, b.id, key, role, app));
 					return role === 'remove' ? `Removed ${key} from "${b.name}".` : `${key} is now ${role === 'editor' ? 'an editor' : 'a viewer'} of "${b.name}".`;
 				}
 				const invited = view.invites.find((i) => i.who === key);
 				if (!invited) throw new Error(`${who.trim()} isn't a member of "${b.name}" or invited to it. Use the name or address brian_info lists.`);
-				outcome(await members.cancelInvite(env, props.userId, b.id, key));
+				outcome(await members.cancelInvite(env, props.userId, b.id, key, app));
 				if (role === 'remove') return `Took back the invitation to ${key}.`;
-				outcome(await members.invite(env, props.userId, b.id, key, role));
+				outcome(await members.invite(env, props.userId, b.id, key, role, app));
 				return `${key} is now invited as ${role === 'editor' ? 'an editor' : 'a viewer'} instead.`;
 			})
 	);
@@ -273,13 +274,13 @@ export async function createServer(): Promise<McpServer> {
 				const done: string[] = [];
 				// The folder first: it's the change that can be refused (a name taken), so nothing is half done.
 				if (folder) {
-					const mount = outcome(await members.setMount(env, props.userId, b.id, folder));
+					const mount = outcome(await members.setMount(env, props.userId, b.id, folder, app));
 					// Obsidian moves the folder when it next looks; this makes it look now.
 					await members.notify(env, props.userId);
 					done.push(`It's now at brian/${mount}/.`);
 				}
 				if (visibility && visibility !== b.visibility) {
-					const changed = await members.setVisibility(env.DB, props.userId, b.id, visibility);
+					const changed = await members.setVisibility(env.DB, props.userId, b.id, visibility, app);
 					if (!changed.ok) throw new Error([...done, `Visibility not changed: ${changed.message}`].join(' '));
 					done.push(visibility === 'public' ? `"${b.name}" is now public: anyone with ${link(b.id)} can sync to it, as a viewer.` : `"${b.name}" is now private: invite only.`);
 				}
@@ -296,7 +297,7 @@ export async function createServer(): Promise<McpServer> {
 		({ brian }) =>
 			manage(async () => {
 				const b = vault.brian(brian);
-				outcome(await members.leave(env, props.userId, b.id));
+				outcome(await members.leave(env, props.userId, b.id, app));
 				return `Left "${b.name}". brian/${b.mount}/ is no longer in this Brian.`;
 			})
 	);
@@ -312,7 +313,7 @@ export async function createServer(): Promise<McpServer> {
 				const b = vault.brian(brian);
 				if (b.role !== 'owner') throw new Error(`Only the owner can delete "${b.name}". To stop having it in this Brian, use leave_brian.`);
 				if (confirm.trim().toLowerCase() !== b.name) throw new Error(`To confirm, pass the brian's name exactly: "${b.name}".`);
-				outcome(await members.deleteBrian(env, props.userId, b.id));
+				outcome(await members.deleteBrian(env, props.userId, b.id, app));
 				return `Moved "${b.name}" to the trash, for every member. restore_brian brings it back until ${day(Date.now() / 1000 + LIMITS.trashDays * 86400)}; after that it's erased.`;
 			})
 	);
@@ -329,7 +330,7 @@ export async function createServer(): Promise<McpServer> {
 				const key = brian.trim().toLowerCase();
 				const found = trashed.filter((b) => b.id === brian.trim() || b.name === key);
 				if (found.length !== 1) throw new Error(found.length ? `More than one "${key}" in the trash: pass its id (whoami lists them).` : `No "${brian.trim()}" in the trash.`);
-				const b = outcome(await members.restoreBrian(env, props.userId, found[0].id));
+				const b = outcome(await members.restoreBrian(env, props.userId, found[0].id, app));
 				return `Restored "${b.name}" at brian/${b.mount}/, with its members.`;
 			})
 	);
@@ -351,7 +352,7 @@ export async function createServer(): Promise<McpServer> {
 					outcome(await members.declineInvite(env, props.userId, invite.brianId));
 					return `Declined the invitation to "${invite.brianName}".`;
 				}
-				const b = outcome(await members.acceptInvite(env, props.userId, invite.brianId));
+				const b = outcome(await members.acceptInvite(env, props.userId, invite.brianId, app));
 				return `Joined "${b.name}" as ${b.role === 'editor' ? 'an editor' : 'a viewer'}. It's at brian/${b.mount}/.`;
 			})
 	);
@@ -366,7 +367,7 @@ export async function createServer(): Promise<McpServer> {
 			manage(async () => {
 				const id = /b_[0-9a-f-]{36}/i.exec(given)?.[0];
 				if (!id) throw new Error('That isn\'t a brian link: it looks like https://mybrian.dev/b/b_….');
-				const b = outcome(await members.join(env, props.userId, id.toLowerCase()));
+				const b = outcome(await members.join(env, props.userId, id.toLowerCase(), app));
 				return `"${b.name}" is at brian/${b.mount}/, read-only${b.role === 'viewer' ? '' : ` (you're ${b.role === 'owner' ? 'its owner' : 'an editor'})`}.`;
 			})
 	);
