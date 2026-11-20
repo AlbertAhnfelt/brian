@@ -1,5 +1,7 @@
 <script lang="ts">
 	import type { ReaderListing } from '@brian/shared';
+	import { untrack } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { displayName, readerHref } from '#lib/reader.ts';
 	import Tree from './Tree.svelte';
 
@@ -17,15 +19,34 @@
 	const byName = (a: string, b: string) => displayName(a).localeCompare(displayName(b), undefined, { sensitivity: 'base', numeric: true });
 	const folders = $derived([...(tree[prefix]?.folders ?? [])].sort(byName));
 	const files = $derived([...(tree[prefix]?.files ?? [])].sort(byName));
+
+	/** Folders closed with their arrow. Opening a page inside one opens it again. */
+	const closed = new SvelteSet<string>();
+	// Only when the page changes: closing the folder the open page is in must stay closed.
+	$effect(() => {
+		const here = current;
+		untrack(() => {
+			for (const folder of closed) if (here !== folder && here.startsWith(folder)) closed.delete(folder);
+		});
+	});
+	const toggle = (folder: string) => (closed.has(folder) ? closed.delete(folder) : closed.add(folder));
 </script>
 
 <ul>
 	{#each folders as folder (folder)}
-		{@const open = folder in tree}
+		{@const loaded = folder in tree}
+		{@const open = loaded && !closed.has(folder)}
 		<li>
-			<a href={readerHref(base, folder)} class="folder" class:open aria-current={current === folder ? 'page' : undefined}>
-				<span class="caret" aria-hidden="true"></span>{displayName(folder)}
-			</a>
+			<div class="row" class:open aria-current={current === folder ? 'page' : undefined}>
+				{#if loaded}
+					<button class="arrow" aria-expanded={open} aria-label="{open ? 'Close' : 'Open'} {displayName(folder)}" onclick={() => toggle(folder)}>
+						<span class="caret" aria-hidden="true"></span>
+					</button>
+				{:else}
+					<a class="arrow" href={readerHref(base, folder)} tabindex="-1" aria-hidden="true"><span class="caret"></span></a>
+				{/if}
+				<a href={readerHref(base, folder)} class="folder">{displayName(folder)}</a>
+			</div>
 			{#if open}<Tree {tree} prefix={folder} {base} {current} />{/if}
 		</li>
 	{/each}
@@ -49,7 +70,8 @@
 		border-left: 1px solid var(--line);
 	}
 
-	a {
+	a,
+	.row {
 		display: flex;
 		align-items: center;
 		gap: 0.35rem;
@@ -62,12 +84,37 @@
 		overflow-wrap: anywhere;
 	}
 
-	a:hover {
+	a:hover,
+	.row:hover {
 		background: var(--surface);
 		color: var(--ink);
 	}
 
-	a[aria-current='page'] {
+	.row {
+		gap: 0;
+		padding: 0;
+	}
+
+	.row .folder {
+		padding: 0.18rem 0.4rem 0.18rem 0.1rem;
+		flex: 1;
+	}
+
+	.row .arrow {
+		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.15rem;
+		align-self: stretch;
+		padding: 0 0 0 0.3rem;
+		border: 0;
+		background: none;
+		cursor: pointer;
+	}
+
+	a[aria-current='page'],
+	.row[aria-current='page'] {
 		background: var(--surface);
 		color: var(--ink);
 		box-shadow: inset 2px 0 0 var(--tag);

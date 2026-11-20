@@ -18,7 +18,7 @@
 	<nav>
 		<a href="/about" aria-current={page.url.pathname === '/about' ? 'page' : undefined}>about</a>
 		{#if data.user}
-			<a href="/notes" aria-current={page.url.pathname === '/notes' || page.url.pathname.startsWith('/notes/') ? 'page' : undefined}>notes</a>
+			<a href="/notes" aria-current={page.url.pathname === '/notes' || page.url.pathname.startsWith('/notes/') ? 'page' : undefined}>my brian</a>
 			<a href="/brians" aria-current={page.url.pathname === '/brians' || page.url.pathname.startsWith('/b/') ? 'page' : undefined}
 				>brians{#if data.invites}<span class="badge" title="{data.invites} invitation{data.invites === 1 ? '' : 's'}">{data.invites}</span>{/if}</a
 			>

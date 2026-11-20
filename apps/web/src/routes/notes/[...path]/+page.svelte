@@ -5,7 +5,7 @@
 
 	let { data }: PageProps = $props();
 	const rootName = $derived(data.shelf.kind === 'mine' ? data.shelf.username : data.shelf.name);
-	const title = $derived(data.page ? displayName(data.page.path) : data.folder ? displayName(data.folder) : 'Notes');
+	const title = $derived(data.page ? displayName(data.page.path) : data.folder ? displayName(data.folder) : 'My brian');
 </script>
 
 <svelte:head>
