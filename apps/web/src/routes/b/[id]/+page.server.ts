@@ -4,7 +4,11 @@ import { account } from '#lib/server/account.ts';
 import type { Actions, PageServerLoad, RequestEvent } from './$types';
 
 export const load: PageServerLoad = async ({ locals, params }) => {
-	if (!locals.user) redirect(303, `/login?next=${encodeURIComponent(`/b/${params.id}`)}`);
+	if (!locals.user) {
+		// Anyone may read a public brian, signed in or not: send them to it rather than to the login.
+		if (await account().readView(null, params.id, '')) redirect(303, `/b/${encodeURIComponent(params.id)}/read`);
+		redirect(303, `/login?next=${encodeURIComponent(`/b/${params.id}`)}`);
+	}
 	// Private brians look the same as missing ones to non-members.
 	const view = await account().viewBrian(locals.user.id, params.id);
 	if (!view) error(404, 'No such brian.');

@@ -1,3 +1,4 @@
+import type { ReaderHit, ReaderView } from './reader';
 import type { BrianSummary, BrianView, DeletedBrian, Invite, Invited, Outcome, Role, Visibility } from './brians';
 
 /** A connected app (Claude, ChatGPT, …) as shown on the account page. */
@@ -72,4 +73,14 @@ export interface AccountRpc {
 	friends(userId: string): Promise<string[]>;
 	addFriend(userId: string, username: string): Promise<Outcome>;
 	removeFriend(userId: string, username: string): Promise<Outcome>;
+
+	/**
+	 * Reading on the website. `brianId` null reads the user's whole Brian (shared brians in
+	 * brian/<mount>/); a brian ID reads that brian alone, for its members, or for anyone when it's
+	 * public: `userId` is null for someone not signed in. `path` is a page ("notes/idea.md") or a
+	 * folder ("notes", "" for the root). Null when there's nothing there or the reader may not see it.
+	 */
+	readView(userId: string | null, brianId: string | null, path: string): Promise<ReaderView | null>;
+	/** Full-text search over the same pages, best matches first. Null as for readView. */
+	readSearch(userId: string | null, brianId: string | null, query: string): Promise<ReaderHit[] | null>;
 }

@@ -198,6 +198,24 @@ export async function viewBrian(db: D1Database, userId: string, brianId: string)
 	return brian ? { member: false, brian: { ...brian, visibility: 'public' } } : null;
 }
 
+/**
+ * A brian this reader may read: one they're a member of, or a public one (anyone may read those,
+ * signed in or not: `userId` null). Null otherwise, the same as for a brian that doesn't exist.
+ */
+export async function readableBrian(
+	db: D1Database,
+	userId: string | null,
+	brianId: string
+): Promise<{ id: string; name: string; visibility: Visibility; role: Role | null } | null> {
+	const mine = userId ? await membership(db, userId, brianId) : null;
+	if (mine) return { id: mine.id, name: mine.name, visibility: mine.visibility, role: mine.role };
+	const brian = await db
+		.prepare(`SELECT id, name FROM brians WHERE id = ? AND visibility = 'public' AND deleted_at IS NULL`)
+		.bind(brianId)
+		.first<{ id: string; name: string }>();
+	return brian ? { ...brian, visibility: 'public', role: null } : null;
+}
+
 export async function setVisibility(db: D1Database, userId: string, brianId: string, visibility: Visibility): Promise<Outcome> {
 	if (visibility !== 'private' && visibility !== 'public') return no('Unknown visibility.');
 	if (!(await owned(db, userId, brianId))) return no(NOT_FOUND);

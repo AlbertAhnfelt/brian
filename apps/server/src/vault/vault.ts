@@ -129,6 +129,8 @@ export class StorageFull extends VaultError {}
 
 /** A replace_all with more matches than this is applied as one diff instead of one splice each. */
 const MAX_EXACT_SPLICES = 200;
+/** Most [[wikilinks]] resolved for one page. */
+const MAX_RESOLVE = 500;
 
 type PageRow = { id: string; path: string; content: string; etag: string; updated_at: number };
 
@@ -296,14 +298,16 @@ export class Vault extends DurableObject<Env> {
 		return { folders: [...folders], files };
 	}
 
-	/** Full-text search over paths and contents, best matches first. */
-	search(query: string, limit = 20): SearchHit[] {
+	/** Full-text search over paths and contents, best matches first. `marks` go around each match in the snippet. */
+	search(query: string, limit = 20, marks: [string, string] = ['**', '**']): SearchHit[] {
 		const match = ftsQuery(query);
 		if (!match) return [];
 		return this.sql
 			.exec<SearchHit>(
-				`SELECT path, snippet(pages_fts, 1, '**', '**', '…', 16) AS snippet, bm25(pages_fts, 5.0, 1.0) AS score
+				`SELECT path, snippet(pages_fts, 1, ?, ?, '…', 16) AS snippet, bm25(pages_fts, 5.0, 1.0) AS score
 				 FROM pages_fts WHERE pages_fts MATCH ? ORDER BY score LIMIT ?`,
+				marks[0],
+				marks[1],
 				match,
 				Math.min(Math.max(limit, 1), LIMITS.searchResults)
 			)
@@ -479,6 +483,28 @@ export class Vault extends DurableObject<Env> {
 	/** The pages at these paths, in order; null where there is none. */
 	readPages(paths: string[]): (Page | null)[] {
 		return paths.map((path) => this.find(normalizePath(path)));
+	}
+
+	/**
+	 * The page each [[wikilink]] target points to, the way Obsidian finds it: the page at that exact
+	 * path, else the shortest path ending in that file name ("Note" finds "notes/Note.md"). In
+	 * order; null where there is none. `.md` is implied.
+	 */
+	resolve(names: string[]): (string | null)[] {
+		return names.slice(0, MAX_RESOLVE).map((name) => {
+			const key = foldPath(name.trim().replace(/^\/+/, ''));
+			if (!key || key.length > LIMITS.pathLength) return null;
+			const file = key.endsWith('.md') ? key : `${key}.md`;
+			const row = this.sql
+				.exec<{ path: string }>(
+					`SELECT path FROM pages WHERE fold = ?1 OR substr(fold, -length(?2)) = ?2
+					 ORDER BY fold = ?1 DESC, length(path), path LIMIT 1`,
+					file,
+					`/${file}`
+				)
+				.toArray()[0];
+			return row?.path ?? null;
+		});
 	}
 
 	/** SHA-256 of the content of each page at these paths, in order; null where there is none. */

@@ -34,6 +34,9 @@
 	"dependencies": {
 		"@brian/shared": "workspace:*",
 		"@fontsource-variable/eb-garamond": "^5.3.0",
-		"fflate": "^0.8.3"
+		"fflate": "^0.8.3",
+		"markdown-it": "^15.0.3",
+		"markdown-it-footnote": "^4.0.0",
+		"markdown-it-mark": "^4.0.0"
 	}
 }

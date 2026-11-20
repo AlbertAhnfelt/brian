@@ -33,7 +33,8 @@ export class Brian {
 	) {}
 
 	/** `source` names what the user is working through ("Claude", "Obsidian"), for page history. */
-	static async load(env: Bindings, userId: string, source: string): Promise<Brian> {
+	/** `rules: false` skips refreshing the root BRIAN.md, for reads that shouldn't write. */
+	static async load(env: Bindings, userId: string, source: string, { rules = true } = {}): Promise<Brian> {
 		const [user, brians] = await Promise.all([
 			env.DB.prepare('SELECT username, agents_manage_brians FROM users WHERE id = ?')
 				.bind(userId)
@@ -43,7 +44,7 @@ export class Brian {
 		const username = user?.username ?? null;
 		// The root BRIAN.md carries the rules for agents that work on the files directly. A failure
 		// here (a full brian, say) must not stop the user's own request.
-		if (username) await env.VAULT.getByName(userId).ensureRules(rootBrianRules(username)).catch((error: Error) => console.error('ensureRules failed', error.message));
+		if (username && rules) await env.VAULT.getByName(userId).ensureRules(rootBrianRules(username)).catch((error: Error) => console.error('ensureRules failed', error.message));
 		return new Brian(env, userId, username, brians, source, user?.agents_manage_brians === 1);
 	}
 
@@ -84,14 +85,14 @@ export class Brian {
 	}
 
 	/** Searches every brian at once and merges the hits by score. */
-	async search(query: string, limit = 20): Promise<(SearchHit & { brian: BrianSummary | null })[]> {
+	async search(query: string, limit = 20, marks?: [string, string]): Promise<(SearchHit & { brian: BrianSummary | null })[]> {
 		this.ready();
 		const targets: { vault: DurableObjectStub<Vault>; outer: string; brian: BrianSummary | null }[] = [
 			{ vault: this.personal(), outer: '', brian: null },
 			...this.brians.map((b) => this.targetOf(b, ''))
 		];
 		const results = await Promise.all(
-			targets.map(async ({ vault, outer, brian }) => (await vault.search(query, limit)).map((hit) => ({ ...hit, path: outer + hit.path, brian })))
+			targets.map(async ({ vault, outer, brian }) => (await vault.search(query, limit, marks)).map((hit) => ({ ...hit, path: outer + hit.path, brian })))
 		);
 		return results
 			.flat()
@@ -102,6 +103,19 @@ export class Brian {
 	async read(path: string): Promise<Page> {
 		const target = this.route(path);
 		return this.shown(target, await target.vault.read(target.inner));
+	}
+
+	/** The page at `path`, or null if there's none. */
+	async find(path: string): Promise<Page | null> {
+		const target = this.route(path);
+		const [page] = await target.vault.readPages([target.inner]);
+		return page ? this.shown(target, page) : null;
+	}
+
+	/** Where [[wikilinks]] on the page at `from` lead: pages in the same brian as it, by `Vault.resolve`. */
+	async resolve(from: string, names: string[]): Promise<(string | null)[]> {
+		const target = this.route(from);
+		return (await target.vault.resolve(names)).map((path) => (path === null ? null : target.outer + path));
 	}
 
 	async write(path: string, content: string, expectedEtag?: string): Promise<Page> {

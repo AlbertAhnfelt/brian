@@ -13,6 +13,7 @@
 
 <article>
 	<h1>{view.brian.name}</h1>
+	<p class="read"><a class="button ghost" href="/b/{view.brian.id}/read">Read it</a></p>
 
 	{#if !view.member}
 		<p>A public brian. Sync to it to get it in your Brian as a read-only folder in <code>brian/</code>.</p>
@@ -170,6 +171,10 @@
 	.small {
 		padding: 0.3rem 0.8rem;
 		font-size: 0.85rem;
+	}
+
+	.read {
+		margin: 1rem 0 0;
 	}
 
 	.small-print {

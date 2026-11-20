@@ -18,6 +18,7 @@
 	<nav>
 		<a href="/about" aria-current={page.url.pathname === '/about' ? 'page' : undefined}>about</a>
 		{#if data.user}
+			<a href="/notes" aria-current={page.url.pathname === '/notes' || page.url.pathname.startsWith('/notes/') ? 'page' : undefined}>notes</a>
 			<a href="/brians" aria-current={page.url.pathname === '/brians' || page.url.pathname.startsWith('/b/') ? 'page' : undefined}
 				>brians{#if data.invites}<span class="badge" title="{data.invites} invitation{data.invites === 1 ? '' : 's'}">{data.invites}</span>{/if}</a
 			>
@@ -100,6 +101,20 @@
 	nav .button {
 		padding: 0.4rem 0.9rem;
 		font-size: 0.85rem;
+	}
+
+	/* Phones: the links wrap under the wordmark rather than run off the screen. */
+	@media (max-width: 560px) {
+		header {
+			flex-wrap: wrap;
+			gap: 0.6rem 1rem;
+			padding: 1rem 1.5rem;
+		}
+
+		nav {
+			flex-wrap: wrap;
+			gap: 0.4rem 1rem;
+		}
 	}
 
 	main {

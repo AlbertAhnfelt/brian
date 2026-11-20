@@ -1,9 +1,10 @@
 import { getOAuthApi } from '@cloudflare/workers-oauth-provider';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { oauthOptions } from './oauth';
-import type { AccountRpc, BrianSummary, BrianView, Connection, DeletedBrian, Invite, Invited, Outcome, Person, Role, Visibility } from '@brian/shared';
+import type { AccountRpc, ReaderHit, ReaderView, BrianSummary, BrianView, Connection, DeletedBrian, Invite, Invited, Outcome, Person, Role, Visibility } from '@brian/shared';
 import * as friends from './brian/friends';
 import * as members from './brian/members';
+import * as reader from './brian/reader';
 import type { ExportedPage } from './vault/vault';
 
 /**
@@ -140,6 +141,14 @@ export class Account extends WorkerEntrypoint<Env> implements AccountRpc {
 
 	removeFriend(userId: string, username: string): Promise<Outcome> {
 		return friends.removeFriend(this.env.DB, userId, username);
+	}
+
+	readView(userId: string | null, brianId: string | null, path: string): Promise<ReaderView | null> {
+		return reader.readView(this.env, userId, brianId, path);
+	}
+
+	readSearch(userId: string | null, brianId: string | null, query: string): Promise<ReaderHit[] | null> {
+		return reader.readSearch(this.env, userId, brianId, query);
 	}
 
 	private async grants(userId: string) {
